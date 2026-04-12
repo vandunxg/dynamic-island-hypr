@@ -8,6 +8,7 @@ Item {
     property string currentArtUrl: ""
     property var activePlayer: null
     property real visualizerPhase: 0
+    property real transitionProgress: 0
     readonly property real revealProgress: showCondition ? 1 : 0
 
     readonly property bool isPlaying: activePlayer && activePlayer.playbackState === MprisPlaybackState.Playing
@@ -27,11 +28,19 @@ Item {
     anchors.fill: parent
     anchors.margins: 5
     opacity: revealProgress
+    x: -width * transitionProgress
 
     Behavior on opacity {
         NumberAnimation {
             duration: showCondition ? 240 : 150
             easing.type: Easing.InOutQuad
+        }
+    }
+
+    Behavior on x {
+        NumberAnimation {
+            duration: 210
+            easing.type: Easing.OutCubic
         }
     }
 

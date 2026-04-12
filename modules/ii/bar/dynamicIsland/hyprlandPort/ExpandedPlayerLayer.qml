@@ -21,6 +21,7 @@ Item {
     property string iconFontFamily: userConfig.iconFontFamily
     property string textFontFamily: userConfig.textFontFamily
     property real visualizerPhase: 0
+    property real transitionProgress: 0
 
     readonly property bool isPlaying: activePlayer && activePlayer.playbackState === MprisPlaybackState.Playing
     readonly property real clampedProgress: Math.max(0, Math.min(1, trackProgress))
@@ -61,11 +62,19 @@ Item {
     anchors.margins: 12
     opacity: revealProgress
     visible: opacity > 0
+    x: -width * transitionProgress
 
     Behavior on opacity {
         NumberAnimation {
             duration: showCondition ? 280 : 160
             easing.type: Easing.InOutCubic
+        }
+    }
+
+    Behavior on x {
+        NumberAnimation {
+            duration: 220
+            easing.type: Easing.OutCubic
         }
     }
 

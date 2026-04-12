@@ -568,7 +568,10 @@ Item {
         property bool splitFromLyricsMode: false
         property string restingState: "normal"
         property bool expandedByPlayerAutoOpen: false
+        property bool pomodoroCompactForced: false
         property real lyricsCapsuleWidth: 220
+        property real compactPreviewProgress: 0
+        property real expandedPreviewProgress: 0
         readonly property int defaultAutoHideInterval: 1250
         readonly property int notificationAutoHideInterval: 4200
         readonly property int swipeAnimationDuration: 220
@@ -580,14 +583,39 @@ Item {
         readonly property bool splitShowsIconOnly: islandState === "split" && osdProgress < 0 && osdCustomText === ""
         readonly property bool splitUsesExtendedLayout: splitShowsProgress || splitShowsText
         readonly property real splitCapsuleWidth: splitShowsProgress ? 176 : (splitShowsText ? 164 : 146)
-        readonly property bool mediaCompactVisible: islandState === "normal" && adapter.mediaAvailable
-        readonly property bool canShowLyricsSwipe: adapter.mediaAvailable && !mediaCompactVisible && (islandState === "normal"
-            || islandState === "lyrics"
-            || (islandState === "long_capsule" && !workspaceFromLyricsMode))
+        readonly property bool pomodoroCompactEnabled: TimerService.pomodoroRunning
+            || TimerService.pomodoroBreak
+            || TimerService.pomodoroCycle > 0
+            || TimerService.pomodoroSecondsLeft < TimerService.pomodoroLapDuration
+            || pomodoroCompactForced
+        readonly property bool mediaCompactAvailable: islandState === "normal" && adapter.mediaAvailable
+        readonly property bool pomodoroCompactAvailable: islandState === "normal" && pomodoroCompactEnabled
+        readonly property bool compactCanSwipe: mediaCompactAvailable && pomodoroCompactAvailable
+        readonly property bool mediaCompactVisible: mediaCompactAvailable
+            && (!pomodoroCompactAvailable || compactPreviewProgress < 0.5)
+        readonly property bool pomodoroCompactVisible: pomodoroCompactAvailable
+            && (!mediaCompactAvailable || compactPreviewProgress >= 0.5)
+        readonly property bool compactPreviewVisible: mediaCompactAvailable || pomodoroCompactAvailable
+        readonly property bool expandedCanSwipe: islandState === "expanded" && adapter.mediaAvailable && pomodoroCompactEnabled
+        readonly property bool expandedMediaVisible: islandState === "expanded" && (!expandedCanSwipe || expandedPreviewProgress < 0.5)
+        readonly property bool expandedPomodoroVisible: islandState === "expanded" && expandedCanSwipe && expandedPreviewProgress >= 0.5
+        readonly property bool canShowLyricsSwipe: adapter.mediaAvailable
+            && !mediaCompactAvailable
+            && (islandState === "lyrics"
+                || (islandState === "long_capsule" && !workspaceFromLyricsMode))
         readonly property string lyricsDisplayText: lyricsBridge.displayText
         readonly property var overviewView: overviewLoader.item && overviewLoader.item.overviewView
             ? overviewLoader.item.overviewView
             : null
+
+        onMediaCompactAvailableChanged: syncCompactPreviewState()
+        onPomodoroCompactAvailableChanged: {
+            if (pomodoroCompactAvailable && mediaCompactAvailable)
+                showMediaCompactPreview();
+            else
+                syncCompactPreviewState();
+        }
+        onExpandedCanSwipeChanged: syncExpandedPreviewState()
 
         property real trackProgress: 0
         property string timePlayed: "0:00"
@@ -609,6 +637,20 @@ Item {
         }
 
         Behavior on swipeTransitionProgress {
+            NumberAnimation {
+                duration: capsuleMouseArea.pressed ? 0 : islandContainer.swipeAnimationDuration
+                easing.type: Easing.OutCubic
+            }
+        }
+
+        Behavior on compactPreviewProgress {
+            NumberAnimation {
+                duration: capsuleMouseArea.pressed ? 0 : islandContainer.swipeAnimationDuration
+                easing.type: Easing.OutCubic
+            }
+        }
+
+        Behavior on expandedPreviewProgress {
             NumberAnimation {
                 duration: capsuleMouseArea.pressed ? 0 : islandContainer.swipeAnimationDuration
                 easing.type: Easing.OutCubic
@@ -720,6 +762,64 @@ Item {
             swipeTransitionProgress = restingState === "lyrics" ? 1 : 0;
             if (restingState === "lyrics")
                 syncLyricsCapsuleWidth();
+            else
+                syncCompactPreviewState();
+        }
+
+        function syncCompactPreviewState() {
+            if (mediaCompactAvailable && !pomodoroCompactAvailable) {
+                compactPreviewProgress = 0;
+                return;
+            }
+
+            if (!mediaCompactAvailable && pomodoroCompactAvailable) {
+                compactPreviewProgress = 1;
+                return;
+            }
+
+            if (!mediaCompactAvailable && !pomodoroCompactAvailable) {
+                compactPreviewProgress = 0;
+                return;
+            }
+
+            compactPreviewProgress = compactPreviewProgress >= 0.5 ? 1 : 0;
+        }
+
+        function showMediaCompactPreview() {
+            compactPreviewProgress = 0;
+        }
+
+        function showPomodoroCompactPreview() {
+            pomodoroCompactForced = true;
+            compactPreviewProgress = 1;
+        }
+
+        function openPomodoroSetup() {
+            pomodoroCompactForced = true;
+            showPomodoroCompactPreview();
+            Persistent.states.sidebar.bottomGroup.tab = 2;
+            GlobalStates.sidebarRightOpen = true;
+        }
+
+        function syncExpandedPreviewState() {
+            if (!expandedCanSwipe) {
+                expandedPreviewProgress = 0;
+                return;
+            }
+
+            expandedPreviewProgress = expandedPreviewProgress >= 0.5 ? 1 : 0;
+        }
+
+        function showExpandedMediaPreview() {
+            expandedPreviewProgress = 0;
+        }
+
+        function showExpandedPomodoroPreview() {
+            if (!expandedCanSwipe) {
+                expandedPreviewProgress = 0;
+                return;
+            }
+            expandedPreviewProgress = 1;
         }
 
         function restartAutoHideTimer(duration) {
@@ -825,6 +925,8 @@ Item {
             abortLyricsTransientMode();
             clearTransientCapsule();
             islandState = "expanded";
+            showExpandedMediaPreview();
+            syncExpandedPreviewState();
             expandedByPlayerAutoOpen = autoOpened;
             if (autoOpened)
                 restartAutoHideTimer();
@@ -1065,6 +1167,12 @@ Item {
                     islandContainer.smartRestoreState();
                 if (!adapter.mediaAvailable && (islandContainer.islandState === "lyrics" || islandContainer.restingState === "lyrics"))
                     islandContainer.showTimeCapsule();
+
+                if (adapter.mediaAvailable && islandContainer.islandState === "normal" && islandContainer.pomodoroCompactAvailable)
+                    islandContainer.showMediaCompactPreview();
+
+                if (adapter.mediaAvailable && islandContainer.islandState === "expanded" && islandContainer.expandedCanSwipe)
+                    islandContainer.showExpandedMediaPreview();
             }
 
             function onVolumePercentChanged() {
@@ -1117,7 +1225,7 @@ Item {
 
             switch (islandContainer.islandState) {
             case "normal":
-                return adapter.mediaAvailable ? root.mediaCompactWidth : root.idleCapsuleWidth;
+                return islandContainer.compactPreviewVisible ? root.mediaCompactWidth : root.idleCapsuleWidth;
             case "split":
                 return islandContainer.splitCapsuleWidth;
             case "long_capsule":
@@ -1146,7 +1254,7 @@ Item {
 
             switch (islandContainer.islandState) {
             case "normal":
-                return adapter.mediaAvailable ? root.mediaCompactHeight : root.idleCapsuleHeight;
+                return islandContainer.compactPreviewVisible ? root.mediaCompactHeight : root.idleCapsuleHeight;
             case "control_center":
                 if (root.fileDropUiVisible)
                     return root.dragChoiceCompactHeight;
@@ -1169,7 +1277,7 @@ Item {
 
             switch (islandContainer.islandState) {
             case "normal":
-                return adapter.mediaAvailable ? 20 : 12;
+                return islandContainer.compactPreviewVisible ? 20 : 12;
             case "control_center":
                 return (root.fileDropUiVisible || root.fileConvertUiVisible) ? root.dragChoiceCompactRadius : 30;
             case "expanded":
@@ -1184,7 +1292,7 @@ Item {
             if (root.overviewVisible)
                 return root.overviewCapsuleRadius;
             if (islandContainer.islandState === "normal")
-                return adapter.mediaAvailable ? 17 : 0;
+                return islandContainer.compactPreviewVisible ? 17 : 0;
             if (islandContainer.islandState === "expanded")
                 return 26;
             return targetRadius;
@@ -1278,7 +1386,7 @@ Item {
                 ? 1
                 : (((root.fileDropUiVisible || root.fileConvertUiVisible) && islandContainer.islandState === "control_center")
                     ? 0
-                    : (islandContainer.islandState === "normal" && !adapter.mediaAvailable ? 0 : 0.08))
+                    : (islandContainer.islandState === "normal" && !islandContainer.compactPreviewVisible ? 0 : 0.08))
 
             Behavior on opacity {
                 NumberAnimation {
@@ -1303,6 +1411,7 @@ Item {
             property real swipeStartX: 0
             property real swipeStartY: 0
             property real swipeStartProgress: 0
+            property string swipeMode: ""
             property bool swipeArmed: false
             property bool swipePassedThreshold: false
             property bool swipeMoved: false
@@ -1318,12 +1427,33 @@ Item {
             onPressed: mouse => {
                 swipeStartX = mouse.x;
                 swipeStartY = mouse.y;
-                swipeArmed = mouse.button === userConfig.mouseButton(userConfig.dynamicIslandSwipeButton)
-                    && islandContainer.canShowLyricsSwipe;
-                swipeStartProgress = islandContainer.islandState === "lyrics" ? 1 : 0;
+
+                const swipeButtonPressed = mouse.button === userConfig.mouseButton(userConfig.dynamicIslandSwipeButton);
+                const primaryButtonPressed = mouse.button === userConfig.mouseButton(userConfig.dynamicIslandPrimaryButton);
+                const secondaryButtonPressed = mouse.button === userConfig.mouseButton(userConfig.dynamicIslandSecondaryButton);
+                const compactExpandedSwipePressed = swipeButtonPressed || primaryButtonPressed || secondaryButtonPressed;
+                swipeMode = "";
+
+                if (compactExpandedSwipePressed && islandContainer.compactCanSwipe) {
+                    swipeArmed = true;
+                    swipeMode = "compact_horizontal";
+                    swipeStartProgress = islandContainer.compactPreviewProgress;
+                } else if (compactExpandedSwipePressed && islandContainer.expandedCanSwipe) {
+                    swipeArmed = true;
+                    swipeMode = "expanded_horizontal";
+                    swipeStartProgress = islandContainer.expandedPreviewProgress;
+                } else if (swipeButtonPressed && islandContainer.canShowLyricsSwipe) {
+                    swipeArmed = true;
+                    swipeMode = "lyrics_horizontal";
+                    swipeStartProgress = islandContainer.islandState === "lyrics" ? 1 : 0;
+                    islandContainer.swipeTransitionProgress = swipeStartProgress;
+                } else {
+                    swipeArmed = false;
+                    swipeStartProgress = 0;
+                }
+
                 swipePassedThreshold = false;
                 swipeMoved = false;
-                islandContainer.swipeTransitionProgress = swipeStartProgress;
             }
 
             onPositionChanged: mouse => {
@@ -1331,12 +1461,29 @@ Item {
                     return;
 
                 const deltaX = mouse.x - swipeStartX;
-                const deltaY = Math.abs(mouse.y - swipeStartY);
-                const adjustedDeltaX = deltaY < 24 ? deltaX : 0;
-                const nextProgress = Math.max(0, Math.min(1, swipeStartProgress + adjustedDeltaX / 108));
+                const deltaY = mouse.y - swipeStartY;
+                const absDeltaX = Math.abs(deltaX);
+                const absDeltaY = Math.abs(deltaY);
 
-                swipeMoved = swipeMoved || Math.abs(adjustedDeltaX) > 6 || deltaY > 6;
-                islandContainer.swipeTransitionProgress = nextProgress;
+                let nextProgress = swipeStartProgress;
+
+                if (swipeMode === "compact_horizontal") {
+                    const adjustedDeltaX = absDeltaY < 24 ? deltaX : 0;
+                    nextProgress = Math.max(0, Math.min(1, swipeStartProgress + adjustedDeltaX / 108));
+                } else {
+                    const adjustedDeltaX = absDeltaY < 24 ? deltaX : 0;
+                    nextProgress = Math.max(0, Math.min(1, swipeStartProgress + adjustedDeltaX / 108));
+                }
+
+                swipeMoved = swipeMoved || absDeltaX > 6 || absDeltaY > 6;
+
+                if (swipeMode === "compact_horizontal")
+                    islandContainer.compactPreviewProgress = nextProgress;
+                else if (swipeMode === "expanded_horizontal")
+                    islandContainer.expandedPreviewProgress = nextProgress;
+                else
+                    islandContainer.swipeTransitionProgress = nextProgress;
+
                 if (swipeStartProgress < 0.5)
                     swipePassedThreshold = nextProgress >= 0.56;
                 else
@@ -1348,25 +1495,48 @@ Item {
                     suppressNextClick = true;
                     swipeSuppressReset.restart();
                 }
+
                 if (swipeArmed && swipePassedThreshold) {
-                    if (swipeStartProgress < 0.5)
-                        islandContainer.showLyricsCapsule();
-                    else
-                        islandContainer.showTimeCapsule();
+                    if (swipeMode === "compact_horizontal") {
+                        if (swipeStartProgress < 0.5)
+                            islandContainer.showPomodoroCompactPreview();
+                        else
+                            islandContainer.showMediaCompactPreview();
+                    } else if (swipeMode === "expanded_horizontal") {
+                        if (swipeStartProgress < 0.5)
+                            islandContainer.showExpandedPomodoroPreview();
+                        else
+                            islandContainer.showExpandedMediaPreview();
+                    } else {
+                        if (swipeStartProgress < 0.5)
+                            islandContainer.showLyricsCapsule();
+                        else
+                            islandContainer.showTimeCapsule();
+                    }
                 } else {
-                    islandContainer.swipeTransitionProgress = swipeStartProgress;
+                    if (swipeMode === "compact_horizontal")
+                        islandContainer.compactPreviewProgress = swipeStartProgress;
+                    else if (swipeMode === "expanded_horizontal")
+                        islandContainer.expandedPreviewProgress = swipeStartProgress;
+                    else
+                        islandContainer.swipeTransitionProgress = swipeStartProgress;
                 }
+
+                swipeMode = "";
                 swipeArmed = false;
                 swipePassedThreshold = false;
                 swipeMoved = false;
             }
 
             onCanceled: {
+                swipeMode = "";
                 swipeArmed = false;
                 swipePassedThreshold = false;
                 swipeMoved = false;
                 suppressNextClick = false;
                 swipeSuppressReset.stop();
+                islandContainer.syncCompactPreviewState();
+                islandContainer.syncExpandedPreviewState();
                 islandContainer.swipeTransitionProgress = islandContainer.islandState === "lyrics" ? 1 : 0;
             }
 
@@ -1379,15 +1549,24 @@ Item {
 
                 if (mouse.button === userConfig.mouseButton(userConfig.dynamicIslandPrimaryButton)) {
                     if (islandContainer.mediaCompactVisible) {
-                        islandContainer.handleConfiguredClickAction("toggleExpandedPlayer");
+                        islandContainer.showExpandedPlayer(false);
                         return;
                     }
+
+                    if (islandContainer.pomodoroCompactVisible || islandContainer.expandedPomodoroVisible) {
+                        islandContainer.openPomodoroSetup();
+                        return;
+                    }
+
                     islandContainer.handleConfiguredClickAction(userConfig.dynamicIslandPrimaryAction);
                     return;
                 }
 
                 if (mouse.button === userConfig.mouseButton(userConfig.dynamicIslandSecondaryButton)) {
-                    islandContainer.handleConfiguredClickAction(userConfig.dynamicIslandSecondaryAction);
+                    if (islandContainer.islandState === "control_center")
+                        islandContainer.smartRestoreState();
+                    else
+                        islandContainer.showControlCenter();
                 }
             }
         }
@@ -1503,10 +1682,31 @@ Item {
             contentOffsetX: 0
         }
 
-        MediaCompactLayer {
-            currentArtUrl: islandContainer.currentArtUrl
-            activePlayer: islandContainer.activePlayer
-            showCondition: !root.overviewVisible && islandContainer.mediaCompactVisible
+        Item {
+            id: compactPreviewTrack
+
+            anchors.fill: parent
+            clip: true
+            visible: !root.overviewVisible && islandContainer.islandState === "normal" && islandContainer.compactPreviewVisible
+
+            MediaCompactLayer {
+                currentArtUrl: islandContainer.currentArtUrl
+                activePlayer: islandContainer.activePlayer
+                showCondition: !root.overviewVisible && islandContainer.mediaCompactVisible
+                transitionProgress: islandContainer.compactPreviewProgress
+            }
+
+            PomodoroCompactLayer {
+                showCondition: !root.overviewVisible && islandContainer.pomodoroCompactVisible
+                secondsLeft: TimerService.pomodoroSecondsLeft
+                lapDuration: TimerService.pomodoroLapDuration
+                isRunning: TimerService.pomodoroRunning
+                isBreak: TimerService.pomodoroBreak
+                isLongBreak: TimerService.pomodoroLongBreak
+                textFontFamily: userConfig.textFontFamily
+                heroFontFamily: userConfig.timeFontFamily
+                transitionProgress: islandContainer.compactPreviewProgress
+            }
         }
 
         SwipeLyricsLayer {
@@ -1573,7 +1773,22 @@ Item {
             activePlayer: islandContainer.activePlayer
             iconFontFamily: userConfig.iconFontFamily
             textFontFamily: userConfig.textFontFamily
-            showCondition: !root.overviewVisible && islandContainer.islandState === "expanded"
+            transitionProgress: islandContainer.expandedPreviewProgress
+            showCondition: !root.overviewVisible && islandContainer.expandedMediaVisible
+            onControlPressed: islandContainer.suppressCapsuleClick()
+        }
+
+        PomodoroExpandedLayer {
+            secondsLeft: TimerService.pomodoroSecondsLeft
+            lapDuration: TimerService.pomodoroLapDuration
+            isRunning: TimerService.pomodoroRunning
+            isBreak: TimerService.pomodoroBreak
+            isLongBreak: TimerService.pomodoroLongBreak
+            cycle: TimerService.pomodoroCycle
+            textFontFamily: userConfig.textFontFamily
+            heroFontFamily: userConfig.timeFontFamily
+            transitionProgress: islandContainer.expandedPreviewProgress
+            showCondition: !root.overviewVisible && islandContainer.expandedPomodoroVisible
             onControlPressed: islandContainer.suppressCapsuleClick()
         }
 
