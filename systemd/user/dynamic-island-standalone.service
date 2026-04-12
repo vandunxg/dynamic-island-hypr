@@ -1,0 +1,15 @@
+[Unit]
+Description=Dynamic Island Standalone (Quickshell)
+After=graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.config/quickshell/ii/scripts/dynamic-island/run-standalone.sh
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=10
+KillMode=mixed
+
+[Install]
+WantedBy=graphical-session.target
