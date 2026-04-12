@@ -1212,7 +1212,7 @@ Item {
 
     Rectangle {
         id: mainCapsule
-        property int morphDuration: 320
+        property int morphDuration: 250
         property real outlineWidth: root.overviewVisible
             ? 1
             : (((root.fileDropUiVisible || root.fileConvertUiVisible) && islandContainer.islandState === "control_center") ? 1.2 : 0)
@@ -1239,7 +1239,7 @@ Item {
                     return root.convertPickerCompactWidth;
                 if (root.fileConvertUiVisible)
                     return root.dragChoiceCompactWidth;
-                return 352;
+                return controlCenterLayer ? controlCenterLayer.preferredCapsuleWidth : 352;
             case "expanded":
                 return root.expandedMediaWidth;
             case "notification":
@@ -1262,7 +1262,7 @@ Item {
                     return root.convertPickerCompactHeight;
                 if (root.fileConvertUiVisible)
                     return root.dragChoiceCompactHeight;
-                return 176;
+                return controlCenterLayer ? controlCenterLayer.preferredCapsuleHeight : 176;
             case "expanded":
                 return root.expandedMediaHeight;
             case "notification":
@@ -1319,7 +1319,7 @@ Item {
         Behavior on height {
             NumberAnimation {
                 duration: mainCapsule.morphDuration
-                easing.type: Easing.InOutCubic
+                easing.type: Easing.OutCubic
             }
         }
 
@@ -1400,11 +1400,16 @@ Item {
             id: capsuleMouseArea
             anchors.fill: parent
             enabled: !root.overviewVisible
-            acceptedButtons: userConfig.mouseButtonsMask([
-                userConfig.dynamicIslandSwipeButton,
-                userConfig.dynamicIslandPrimaryButton,
-                userConfig.dynamicIslandSecondaryButton
-            ])
+                && !(islandContainer.islandState === "control_center"
+                    && controlCenterLayer
+                    && controlCenterLayer.quickDetailOpen)
+            acceptedButtons: islandContainer.islandState === "control_center"
+                ? userConfig.mouseButtonsMask([userConfig.dynamicIslandSecondaryButton])
+                : userConfig.mouseButtonsMask([
+                    userConfig.dynamicIslandSwipeButton,
+                    userConfig.dynamicIslandPrimaryButton,
+                    userConfig.dynamicIslandSecondaryButton
+                ])
             preventStealing: true
             hoverEnabled: true
 
@@ -1431,7 +1436,8 @@ Item {
                 const swipeButtonPressed = mouse.button === userConfig.mouseButton(userConfig.dynamicIslandSwipeButton);
                 const primaryButtonPressed = mouse.button === userConfig.mouseButton(userConfig.dynamicIslandPrimaryButton);
                 const secondaryButtonPressed = mouse.button === userConfig.mouseButton(userConfig.dynamicIslandSecondaryButton);
-                const compactExpandedSwipePressed = swipeButtonPressed || primaryButtonPressed || secondaryButtonPressed;
+                const swipeGesturePressed = swipeButtonPressed && !secondaryButtonPressed;
+                const compactExpandedSwipePressed = swipeGesturePressed || primaryButtonPressed;
                 swipeMode = "";
 
                 if (compactExpandedSwipePressed && islandContainer.compactCanSwipe) {
@@ -1442,7 +1448,7 @@ Item {
                     swipeArmed = true;
                     swipeMode = "expanded_horizontal";
                     swipeStartProgress = islandContainer.expandedPreviewProgress;
-                } else if (swipeButtonPressed && islandContainer.canShowLyricsSwipe) {
+                } else if (swipeGesturePressed && islandContainer.canShowLyricsSwipe) {
                     swipeArmed = true;
                     swipeMode = "lyrics_horizontal";
                     swipeStartProgress = islandContainer.islandState === "lyrics" ? 1 : 0;
@@ -1805,6 +1811,8 @@ Item {
         }
 
         ControlCenterLayer {
+            id: controlCenterLayer
+
             iconFontFamily: userConfig.iconFontFamily
             textFontFamily: userConfig.textFontFamily
             heroFontFamily: userConfig.heroFontFamily
@@ -1818,6 +1826,7 @@ Item {
             isCharging: islandContainer.isCharging
             volumeLevel: islandContainer.currentVolume
             brightnessLevel: islandContainer.currentBrightness
+            brightnessAvailable: !!adapter.brightnessMonitor && (adapter.brightnessMonitor.ready ?? false)
             cpuUsagePercent: adapter.systemCpuPercent
             memoryUsagePercent: adapter.systemMemoryPercent
             memoryUsageLabel: adapter.systemMemoryUsageLabel
