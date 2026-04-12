@@ -1,5 +1,9 @@
 import QtQuick
 import Quickshell
+import Quickshell.Io
+import Quickshell.Bluetooth
+import QtQuick.Controls
+import qs.services
 
 Item {
     id: controlCenter
@@ -31,6 +35,7 @@ Item {
     property bool isCharging: false
     property real volumeLevel: -1
     property real brightnessLevel: -1
+    property bool brightnessAvailable: brightnessLevel >= 0
     property int cpuUsagePercent: 0
     property int memoryUsagePercent: 0
     property string memoryUsageLabel: "--"
@@ -50,6 +55,20 @@ Item {
     property bool immediateHide: false
     property bool fileTrayDragActive: false
     property string fileDropTarget: "tray"
+    property string quickDetailPanel: ""
+    property string quickFocusMode: Notifications.silent ? "dnd" : "off"
+    property string quickPowerProfile: "unknown"
+    property string quickVpnStatus: "unknown"
+    property bool quickVolumeDragging: false
+    property bool quickBrightnessDragging: false
+    property real quickVolumeUi: Math.max(0, volumeLevel)
+    property real quickBrightnessUi: Math.max(0, brightnessLevel)
+    property bool quickWifiPending: false
+    property bool quickWifiTarget: false
+    property bool quickBluetoothPending: false
+    property bool quickBluetoothTarget: false
+    property bool quickNightLightPending: false
+    property bool quickNightLightTarget: false
 
     property int pageIndex: 0
     property real dragOffset: 0
@@ -64,12 +83,31 @@ Item {
     readonly property bool convertPickerMode: fileConvertPickerActive && !fileDropActive
     readonly property bool convertCompactMode: (fileConvertActive || fileConvertDone || fileConvertFailed) && !fileDropActive
     readonly property bool compactMode: dragChoiceMode || convertPickerMode || convertCompactMode
-    readonly property int pageCount: compactMode ? 1 : (hasFileTray ? 3 : 2)
+    readonly property int pageCount: compactMode ? 1 : (hasFileTray ? 4 : 3)
     readonly property int fileTrayPageIndex: 0
     readonly property int weatherPageIndex: hasFileTray ? 1 : 0
     readonly property int systemPageIndex: hasFileTray ? 2 : 1
+    readonly property int quickControlsPageIndex: hasFileTray ? 3 : 2
+    readonly property real defaultCapsuleWidth: 352
+    readonly property real quickCapsuleWidth: 352
+    readonly property real defaultCapsuleHeight: 176
+    readonly property real quickCapsuleHeight: quickDetailPanel !== "" ? 324 : 300
+    readonly property real preferredCapsuleWidth: !compactMode && pageIndex === quickControlsPageIndex
+        ? quickCapsuleWidth
+        : defaultCapsuleWidth
+    readonly property real preferredCapsuleHeight: !compactMode && pageIndex === quickControlsPageIndex
+        ? quickCapsuleHeight
+        : defaultCapsuleHeight
     readonly property real revealProgress: showCondition ? 1 : 0
-    readonly property real swipeThreshold: 24
+    readonly property real swipeThreshold: 34
+    readonly property real pageStride: compactMode
+        ? 88
+        : defaultCapsuleHeight
+    readonly property real standardViewportWidth: Math.max(272, defaultCapsuleWidth - 40)
+    readonly property real standardViewportHeight: Math.max(136, defaultCapsuleHeight - 24)
+    readonly property bool quickDetailOpen: quickDetailPanel !== ""
+    readonly property int quickAnimTapMs: 88
+    readonly property int quickAnimStateMs: 108
     readonly property string primaryTime: {
         const parts = String(currentTime || "").trim().split(/\s+/);
         return parts.length > 0 ? parts[0] : "00:00";
@@ -108,6 +146,93 @@ Item {
         ? "weather-showers-scattered"
         : (weatherIsSnowy ? "weather-snow" : (weatherIsCloudy ? "weather-overcast" : "weather-clear"))
     readonly property bool weatherPageActive: !compactMode && pageIndex === weatherPageIndex
+    readonly property bool quickWifiUiEnabled: quickWifiPending ? quickWifiTarget : Network.wifiEnabled
+    readonly property bool quickBluetoothUiEnabled: quickBluetoothPending ? quickBluetoothTarget : BluetoothStatus.enabled
+    readonly property bool quickNightLightUiActive: quickNightLightPending ? quickNightLightTarget : Hyprsunset.active
+    readonly property bool quickCanToggleWifi: Network.wifiStatus !== "disabled"
+        || quickWifiUiEnabled
+        || (Network.friendlyWifiNetworks && Network.friendlyWifiNetworks.length > 0)
+    readonly property bool quickHasWifiCapability: Network.ethernet || quickCanToggleWifi
+    readonly property bool quickHasBluetoothCapability: BluetoothStatus.available
+    readonly property bool quickHasBatteryCapability: Battery.available
+    readonly property bool quickHasPowerProfileCapability: quickPowerProfile !== "unknown"
+    readonly property bool quickHasPowerCapability: quickHasBatteryCapability || quickHasPowerProfileCapability
+    readonly property bool quickHasBrightnessCapability: brightnessAvailable
+    readonly property bool quickHasVolumeCapability: volumeLevel >= 0
+    readonly property bool quickNetworkOnline: Network.ethernet || (quickWifiUiEnabled && Network.active !== null)
+    readonly property int quickNetworkSignalStrength: Math.max(0, Math.min(100, Number(Network.networkStrength) || 0))
+    readonly property string quickNetworkSubtitle: {
+        if (!quickHasWifiCapability)
+            return "Unavailable";
+        if (Network.ethernet)
+            return "Connected";
+        if (!quickWifiUiEnabled)
+            return "Off";
+        if (Network.wifiConnecting || Network.wifiStatus === "connecting")
+            return "Connecting";
+        if (Network.active && Network.active.ssid)
+            return String(Network.active.ssid);
+        if (Network.networkName !== "")
+            return String(Network.networkName);
+        if (Network.wifiStatus === "limited")
+            return "Limited";
+        return "Disconnected";
+    }
+    readonly property string quickNetworkConnectivity: {
+        if (!quickHasWifiCapability)
+            return "Unavailable";
+        if (Network.ethernet)
+            return "Internet";
+        if (!quickWifiUiEnabled)
+            return "Off";
+        if (Network.wifiConnecting || Network.wifiStatus === "connecting")
+            return "Connecting";
+        if (Network.wifiStatus === "limited")
+            return "No internet";
+        if (Network.wifiStatus === "connected")
+            return "Online";
+        return "Disconnected";
+    }
+    readonly property string quickBluetoothSubtitle: {
+        if (!quickHasBluetoothCapability)
+            return "Unavailable";
+        if (!quickBluetoothUiEnabled)
+            return "Off";
+        if (BluetoothStatus.activeDeviceCount > 0)
+            return BluetoothStatus.activeDeviceCount + " connected";
+        return "On";
+    }
+    readonly property string quickFocusSubtitle: quickFocusModeLabel(quickFocusMode)
+    readonly property string quickPowerSubtitle: {
+        if (!quickHasPowerCapability)
+            return "Unavailable";
+
+        const profile = quickHasPowerProfileCapability
+            ? quickPowerProfilePretty(quickPowerProfile)
+            : "No profile";
+
+        if (quickHasBatteryCapability) {
+            const batteryPercent = Math.round((Battery.percentage || 0) * 100) + "%";
+            if (Battery.isCharging)
+                return batteryPercent + " · Charging";
+            return quickHasPowerProfileCapability ? (batteryPercent + " · " + profile) : batteryPercent;
+        }
+
+        return profile;
+    }
+    readonly property string quickAudioOutputLabel: Audio.sink ? Audio.friendlyDeviceName(Audio.sink) : "No audio output"
+    readonly property string quickContextFooter: {
+        const parts = [];
+        if (quickVpnStatus === "connected")
+            parts.push("VPN connected");
+        if (quickHasBatteryCapability)
+            parts.push(Math.round((Battery.percentage || 0) * 100) + "%");
+        if (Audio.source && Audio.source.audio && Audio.source.audio.muted)
+            parts.push("Mic muted");
+        if (parts.length === 0)
+            return "";
+        return parts.join(" · ");
+    }
 
     function clampPageIndex(value) {
         return Math.max(0, Math.min(pageCount - 1, value));
@@ -208,6 +333,168 @@ Item {
         return Quickshell.iconPath(lookup, "text-x-generic");
     }
 
+    function quickOpenDetail(name) {
+        quickDetailPanel = String(name || "");
+        if (quickDetailFlick)
+            quickDetailFlick.contentY = 0;
+    }
+
+    function quickCloseDetail() {
+        quickDetailPanel = "";
+        if (quickDetailFlick)
+            quickDetailFlick.contentY = 0;
+    }
+
+    function quickSetFocusMode(mode) {
+        const next = String(mode || "off").toLowerCase();
+        quickFocusMode = next;
+        Notifications.silent = next !== "off";
+    }
+
+    function quickFocusModeLabel(mode) {
+        const key = String(mode || "off").toLowerCase();
+        if (key === "dnd")
+            return "Do Not Disturb";
+        if (key === "work")
+            return "Work";
+        if (key === "meeting")
+            return "Meeting";
+        if (key === "gaming")
+            return "Gaming";
+        return "Off";
+    }
+
+    function quickFocusModeIcon(mode) {
+        const key = String(mode || "off").toLowerCase();
+        if (key === "dnd")
+            return "moon";
+        if (key === "work")
+            return "briefcase";
+        if (key === "meeting")
+            return "calendar";
+        if (key === "gaming")
+            return "gamepad-2";
+        return "bell-off";
+    }
+
+    function quickToggleNetwork() {
+        if (!quickCanToggleWifi)
+            return;
+
+        quickWifiTarget = !quickWifiUiEnabled;
+        quickWifiPending = true;
+        quickWifiPendingReset.restart();
+        Network.toggleWifi();
+        Network.update();
+    }
+
+    function quickToggleBluetooth() {
+        if (!Bluetooth.defaultAdapter)
+            return;
+
+        const nextEnabled = !quickBluetoothUiEnabled;
+        quickBluetoothTarget = nextEnabled;
+        quickBluetoothPending = true;
+        quickBluetoothPendingReset.restart();
+        Bluetooth.defaultAdapter.enabled = nextEnabled;
+        if (!nextEnabled)
+            Bluetooth.defaultAdapter.discovering = false;
+    }
+
+    function quickToggleNightLight() {
+        quickNightLightTarget = !quickNightLightUiActive;
+        quickNightLightPending = true;
+        quickNightLightPendingReset.restart();
+        Hyprsunset.toggle();
+    }
+
+    function quickSetVolume(value) {
+        const clamped = Math.max(0, Math.min(1, Number(value) || 0));
+        quickVolumeUi = clamped;
+        volumeChanged(clamped);
+    }
+
+    function quickSetBrightness(value) {
+        if (!quickHasBrightnessCapability)
+            return;
+        const clamped = Math.max(0, Math.min(1, Number(value) || 0));
+        quickBrightnessUi = clamped;
+        brightnessChanged(clamped);
+    }
+
+    function quickPowerProfilePretty(profile) {
+        const key = String(profile || "").trim().toLowerCase();
+        if (key === "performance")
+            return "Performance";
+        if (key === "power-saver")
+            return "Power Saver";
+        if (key === "balanced")
+            return "Balanced";
+        return "Unknown";
+    }
+
+    function quickPowerProfileIcon(profile) {
+        const key = String(profile || "").trim().toLowerCase();
+        if (key === "power-saver")
+            return "battery";
+        if (key === "performance")
+            return "cpu";
+        return "layout-grid";
+    }
+
+    function quickPowerProfileDescription(profile) {
+        const key = String(profile || "").trim().toLowerCase();
+        if (key === "power-saver")
+            return "Lower power usage";
+        if (key === "performance")
+            return "Higher speed, more power draw";
+        if (key === "balanced")
+            return "Balanced power and performance";
+        return "Profile unavailable";
+    }
+
+    function quickCyclePowerProfile() {
+        if (!quickHasPowerProfileCapability)
+            return;
+
+        const order = ["power-saver", "balanced", "performance"];
+        const current = String(quickPowerProfile || "balanced").toLowerCase();
+        const currentIndex = order.indexOf(current);
+        const next = order[(currentIndex + 1 + order.length) % order.length];
+        quickSetPowerProfile(next);
+    }
+
+    function quickSetPowerProfile(profile) {
+        if (!quickHasPowerProfileCapability)
+            return;
+
+        const next = String(profile || "").trim().toLowerCase();
+        if (!["power-saver", "balanced", "performance"].includes(next))
+            return;
+
+        quickPowerProfile = next;
+        powerProfileSet.command = ["sh", "-lc", "powerprofilesctl set '" + next + "' >/dev/null 2>&1 || true"];
+        powerProfileSet.running = true;
+    }
+
+    function quickRefreshStatus() {
+        if (!showCondition || compactMode)
+            return;
+
+        powerProfileGet.running = true;
+        vpnStatusGet.running = true;
+    }
+
+    onVolumeLevelChanged: {
+        if (!quickVolumeDragging)
+            quickVolumeUi = Math.max(0, Math.min(1, volumeLevel));
+    }
+
+    onBrightnessLevelChanged: {
+        if (!quickBrightnessDragging)
+            quickBrightnessUi = Math.max(0, Math.min(1, brightnessLevel));
+    }
+
     onHasFileTrayChanged: {
         if (hasFileTray)
             pageIndex = 0;
@@ -254,10 +541,137 @@ Item {
         pageIndex = clampPageIndex(pageIndex);
     }
 
+    onPageIndexChanged: {
+        if (pageIndex !== quickControlsPageIndex)
+            quickCloseDetail();
+        else
+            quickRefreshStatus();
+    }
+
     onShowConditionChanged: {
         if (showCondition) {
             pageIndex = 0;
             dragOffset = 0;
+            quickRefreshStatus();
+        } else {
+            quickCloseDetail();
+            quickWifiPending = false;
+            quickBluetoothPending = false;
+            quickNightLightPending = false;
+        }
+    }
+
+    onCompactModeChanged: {
+        if (compactMode)
+            quickCloseDetail();
+    }
+
+    Connections {
+        target: Notifications
+
+        function onSilentChanged() {
+            quickFocusMode = Notifications.silent ? "dnd" : "off";
+        }
+    }
+
+    Connections {
+        target: Network
+
+        function onWifiEnabledChanged() {
+            if (quickWifiPending && Network.wifiEnabled === quickWifiTarget)
+                quickWifiPending = false;
+        }
+    }
+
+    Connections {
+        target: BluetoothStatus
+
+        function onEnabledChanged() {
+            if (quickBluetoothPending && BluetoothStatus.enabled === quickBluetoothTarget)
+                quickBluetoothPending = false;
+        }
+    }
+
+    Connections {
+        target: Hyprsunset
+
+        function onActiveChanged() {
+            if (quickNightLightPending && Hyprsunset.active === quickNightLightTarget)
+                quickNightLightPending = false;
+        }
+    }
+
+    Timer {
+        id: quickStatusPoller
+
+        interval: 7000
+        running: controlCenter.showCondition && !controlCenter.compactMode
+        repeat: true
+        onTriggered: controlCenter.quickRefreshStatus()
+    }
+
+    Timer {
+        id: quickWifiPendingReset
+
+        interval: 900
+        repeat: false
+        onTriggered: controlCenter.quickWifiPending = false
+    }
+
+    Timer {
+        id: quickBluetoothPendingReset
+
+        interval: 900
+        repeat: false
+        onTriggered: controlCenter.quickBluetoothPending = false
+    }
+
+    Timer {
+        id: quickNightLightPendingReset
+
+        interval: 900
+        repeat: false
+        onTriggered: controlCenter.quickNightLightPending = false
+    }
+
+    Process {
+        id: powerProfileGet
+
+        command: ["sh", "-lc", "powerprofilesctl get 2>/dev/null"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const value = String(text || "").trim().toLowerCase();
+                const validProfiles = ["power-saver", "balanced", "performance"];
+                controlCenter.quickPowerProfile = validProfiles.includes(value) ? value : "unknown";
+            }
+        }
+    }
+
+    Process {
+        id: powerProfileSet
+
+        stdout: StdioCollector {
+            onStreamFinished: {
+                powerProfileGet.running = true;
+            }
+        }
+
+        stderr: StdioCollector {
+            onStreamFinished: {
+                powerProfileGet.running = true;
+            }
+        }
+    }
+
+    Process {
+        id: vpnStatusGet
+
+        command: ["sh", "-lc", "nmcli -t -f TYPE,STATE connection show --active 2>/dev/null | awk -F: '$1 ~ /vpn/ && $2 ~ /activated/ { found=1 } END { print found ? \"connected\" : \"disconnected\" }'"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const value = String(text || "").trim().toLowerCase();
+                controlCenter.quickVpnStatus = value !== "" ? value : "unknown";
+            }
         }
     }
 
@@ -285,15 +699,6 @@ Item {
         anchors.fill: parent
         radius: controlCenter.compactMode ? 24 : 28
         color: controlCenter.compactMode ? "#04070c" : "#050506"
-
-        Rectangle {
-            anchors.fill: parent
-            anchors.margins: 1
-            radius: parent.radius - 1
-            color: "transparent"
-            border.width: 1
-            border.color: controlCenter.compactMode ? "#00000000" : "#18ffffff"
-        }
     }
 
     Item {
@@ -301,7 +706,7 @@ Item {
 
         anchors.fill: parent
         anchors.leftMargin: controlCenter.compactMode ? 10 : 14
-        anchors.rightMargin: controlCenter.compactMode ? 10 : 34
+        anchors.rightMargin: controlCenter.compactMode ? 10 : (controlCenter.pageIndex === controlCenter.quickControlsPageIndex ? 14 : 26)
         anchors.topMargin: controlCenter.compactMode ? 8 : 12
         anchors.bottomMargin: controlCenter.compactMode ? 8 : 12
         clip: true
@@ -310,15 +715,15 @@ Item {
             id: pagesTrack
 
             width: parent.width
-            height: parent.height * controlCenter.pageCount
-            y: -controlCenter.pageIndex * viewport.height + controlCenter.dragOffset
+            height: controlCenter.pageStride * Math.max(0, controlCenter.pageCount - 1) + viewport.height
+            y: -controlCenter.pageIndex * controlCenter.pageStride + controlCenter.dragOffset
 
             Behavior on y {
                 enabled: !pageSwipeHandler.active
 
                 NumberAnimation {
-                    duration: 300
-                    easing.type: Easing.InOutCubic
+                    duration: 180
+                    easing.type: Easing.OutCubic
                 }
             }
 
@@ -326,7 +731,7 @@ Item {
                 id: fileTrayPage
 
                 visible: controlCenter.hasFileTray
-                y: viewport.height * controlCenter.fileTrayPageIndex
+                y: controlCenter.pageStride * controlCenter.fileTrayPageIndex
                 width: viewport.width
                 height: viewport.height
 
@@ -1001,7 +1406,7 @@ Item {
                 property real ambientMotion: 0
                 property real ambientGlow: 0
 
-                y: viewport.height * controlCenter.weatherPageIndex + (controlCenter.weatherPageActive ? ((ambientMotion - 0.5) * 1.4) : 0)
+                y: controlCenter.pageStride * controlCenter.weatherPageIndex + (controlCenter.weatherPageActive ? ((ambientMotion - 0.5) * 1.4) : 0)
                 width: viewport.width
                 height: viewport.height
                 scale: controlCenter.weatherPageActive ? (0.998 + ambientGlow * 0.006) : 1
@@ -1052,9 +1457,17 @@ Item {
                     }
                 }
 
-                Row {
-                    anchors.fill: parent
-                    spacing: 10
+                Item {
+                    id: weatherViewportFrame
+
+                    width: Math.min(parent.width, controlCenter.standardViewportWidth)
+                    height: Math.min(parent.height, controlCenter.standardViewportHeight)
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.top: parent.top
+
+                    Row {
+                        anchors.fill: parent
+                        spacing: 10
 
                     Item {
                         id: weatherLeftColumn
@@ -1311,16 +1724,27 @@ Item {
                 }
             }
 
+            }
+
             Item {
                 id: systemPage
 
-                y: viewport.height * controlCenter.systemPageIndex
+                visible: controlCenter.pageIndex !== controlCenter.quickControlsPageIndex || pageSwipeHandler.active
+                y: controlCenter.pageStride * controlCenter.systemPageIndex
                 width: viewport.width
                 height: viewport.height
 
-                Column {
-                    anchors.fill: parent
-                    spacing: 6
+                Item {
+                    id: systemViewportFrame
+
+                    width: Math.min(parent.width, controlCenter.standardViewportWidth)
+                    height: Math.min(parent.height, controlCenter.standardViewportHeight)
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.top: parent.top
+
+                    Column {
+                        anchors.fill: parent
+                        spacing: 6
 
                     Item {
                         width: parent.width
@@ -1518,12 +1942,1763 @@ Item {
                     }
                 }
             }
+
+            }
+
+            Item {
+                id: quickControlsPage
+
+                y: controlCenter.pageStride * controlCenter.quickControlsPageIndex
+                width: viewport.width
+                height: viewport.height
+
+                readonly property bool panelActive: controlCenter.pageIndex === controlCenter.quickControlsPageIndex && !controlCenter.compactMode
+                readonly property real tileHeight: 56
+                readonly property real sliderHeight: 50
+                readonly property real footerHeight: 22
+                readonly property real moduleGap: 7
+                readonly property real topSectionHeight: tileHeight * 2 + moduleGap
+
+                Component.onCompleted: controlCenter.quickRefreshStatus()
+
+                Rectangle {
+                    anchors.fill: parent
+                    radius: 16
+                    color: "#06080d"
+                    border.width: 0
+                }
+
+                Column {
+                    anchors.fill: parent
+                    anchors.margins: 8
+                    spacing: 7
+
+                    Item {
+                        width: parent.width
+                        height: quickControlsPage.topSectionHeight
+
+                        Grid {
+                            anchors.fill: parent
+                            columns: 2
+                            rowSpacing: quickControlsPage.moduleGap
+                            columnSpacing: quickControlsPage.moduleGap
+
+                            Rectangle {
+                                id: wifiTile
+
+                                width: (parent.width - parent.columnSpacing) / 2
+                                height: quickControlsPage.tileHeight
+                                radius: 14
+                                color: controlCenter.quickNetworkOnline ? "#1a2a43" : "#171d28"
+                                border.width: 0
+                                opacity: controlCenter.quickHasWifiCapability ? 1 : 0.55
+                                scale: wifiTileTap.pressed ? 0.985 : 1
+
+                                Behavior on color {
+                                    ColorAnimation {
+                                        duration: controlCenter.quickAnimStateMs
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
+
+                                Behavior on scale {
+                                    NumberAnimation {
+                                        duration: controlCenter.quickAnimTapMs
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: wifiTileTap
+
+                                    anchors.fill: parent
+                                    enabled: controlCenter.quickHasWifiCapability
+                                    onClicked: controlCenter.quickOpenDetail("network")
+                                }
+
+                                Row {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 9
+                                    anchors.rightMargin: 8
+                                    spacing: 7
+
+                                    Rectangle {
+                                        width: 22
+                                        height: 22
+                                        radius: 11
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        color: "#2d4f80"
+
+                                        LucideIcon {
+                                            anchors.centerIn: parent
+                                            width: 12
+                                            height: 12
+                                            iconName: controlCenter.quickWifiUiEnabled ? "wifi" : "wifi-off"
+                                        }
+                                    }
+
+                                    Column {
+                                        width: parent.width - 22 - 40 - parent.spacing * 2
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        spacing: 0
+
+                                        Text {
+                                            text: "Wi-Fi"
+                                            color: "#e7eef9"
+                                            font.pixelSize: 10
+                                            font.family: textFontFamily
+                                            font.weight: Font.DemiBold
+                                        }
+
+                                        Text {
+                                            text: controlCenter.quickNetworkSubtitle
+                                            color: "#9eb0c6"
+                                            font.pixelSize: 8
+                                            font.family: textFontFamily
+                                            font.weight: Font.Medium
+                                            elide: Text.ElideRight
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        width: 40
+                                        height: 20
+                                        radius: 10
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        color: controlCenter.quickCanToggleWifi && controlCenter.quickWifiUiEnabled ? "#3d81e0" : "#2a3548"
+                                        border.width: 0
+
+                                        Behavior on color {
+                                            ColorAnimation {
+                                                duration: controlCenter.quickAnimStateMs
+                                                easing.type: Easing.OutCubic
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            width: 16
+                                            height: 16
+                                            radius: 8
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            x: controlCenter.quickCanToggleWifi && controlCenter.quickWifiUiEnabled ? (parent.width - width - 2) : 2
+                                            color: "#edf5ff"
+
+                                            Behavior on x {
+                                                NumberAnimation {
+                                                    duration: controlCenter.quickAnimStateMs
+                                                    easing.type: Easing.OutCubic
+                                                }
+                                            }
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            enabled: controlCenter.quickCanToggleWifi
+                                            onClicked: {
+                                                mouse.accepted = true;
+                                                controlCenter.quickToggleNetwork();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                id: bluetoothTile
+
+                                width: (parent.width - parent.columnSpacing) / 2
+                                height: quickControlsPage.tileHeight
+                                radius: 14
+                                color: (controlCenter.quickHasBluetoothCapability && controlCenter.quickBluetoothUiEnabled) ? "#1a2a43" : "#171d28"
+                                border.width: 0
+                                opacity: controlCenter.quickHasBluetoothCapability ? 1 : 0.55
+                                scale: bluetoothTileTap.pressed ? 0.985 : 1
+
+                                Behavior on color {
+                                    ColorAnimation {
+                                        duration: controlCenter.quickAnimStateMs
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
+
+                                Behavior on scale {
+                                    NumberAnimation {
+                                        duration: controlCenter.quickAnimTapMs
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: bluetoothTileTap
+
+                                    anchors.fill: parent
+                                    enabled: controlCenter.quickHasBluetoothCapability
+                                    onClicked: controlCenter.quickOpenDetail("bluetooth")
+                                }
+
+                                Row {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 9
+                                    anchors.rightMargin: 8
+                                    spacing: 7
+
+                                    Rectangle {
+                                        width: 22
+                                        height: 22
+                                        radius: 11
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        color: "#2d4f80"
+
+                                        LucideIcon {
+                                            anchors.centerIn: parent
+                                            width: 12
+                                            height: 12
+                                            iconName: "bluetooth"
+                                        }
+                                    }
+
+                                    Column {
+                                        width: parent.width - 22 - 40 - parent.spacing * 2
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        spacing: 0
+
+                                        Text {
+                                            text: "Bluetooth"
+                                            color: "#e7eef9"
+                                            font.pixelSize: 10
+                                            font.family: textFontFamily
+                                            font.weight: Font.DemiBold
+                                        }
+
+                                        Text {
+                                            text: controlCenter.quickBluetoothSubtitle
+                                            color: "#9eb0c6"
+                                            font.pixelSize: 8
+                                            font.family: textFontFamily
+                                            font.weight: Font.Medium
+                                            elide: Text.ElideRight
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        width: 40
+                                        height: 20
+                                        radius: 10
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        color: controlCenter.quickBluetoothUiEnabled ? "#3d81e0" : "#2a3548"
+                                        border.width: 0
+
+                                        Behavior on color {
+                                            ColorAnimation {
+                                                duration: controlCenter.quickAnimStateMs
+                                                easing.type: Easing.OutCubic
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            width: 16
+                                            height: 16
+                                            radius: 8
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            x: controlCenter.quickBluetoothUiEnabled ? (parent.width - width - 2) : 2
+                                            color: "#edf5ff"
+
+                                            Behavior on x {
+                                                NumberAnimation {
+                                                    duration: controlCenter.quickAnimStateMs
+                                                    easing.type: Easing.OutCubic
+                                                }
+                                            }
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            enabled: controlCenter.quickHasBluetoothCapability
+                                            onClicked: {
+                                                mouse.accepted = true;
+                                                controlCenter.quickToggleBluetooth();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                id: focusTile
+
+                                width: (parent.width - parent.columnSpacing) / 2
+                                height: quickControlsPage.tileHeight
+                                radius: 14
+                                color: controlCenter.quickFocusMode !== "off" ? "#2a2340" : "#171d28"
+                                border.width: 0
+                                scale: focusTileTap.pressed ? 0.985 : 1
+
+                                Behavior on color {
+                                    ColorAnimation {
+                                        duration: controlCenter.quickAnimStateMs
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
+
+                                Behavior on scale {
+                                    NumberAnimation {
+                                        duration: controlCenter.quickAnimTapMs
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: focusTileTap
+
+                                    anchors.fill: parent
+                                    onClicked: controlCenter.quickOpenDetail("focus")
+                                }
+
+                                Row {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 9
+                                    anchors.rightMargin: 8
+                                    spacing: 7
+
+                                    Rectangle {
+                                        width: 22
+                                        height: 22
+                                        radius: 11
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        color: controlCenter.quickFocusMode !== "off" ? "#5d478f" : "#2a3548"
+
+                                        LucideIcon {
+                                            anchors.centerIn: parent
+                                            width: 12
+                                            height: 12
+                                            iconName: controlCenter.quickFocusModeIcon(controlCenter.quickFocusMode)
+                                        }
+                                    }
+
+                                    Column {
+                                        width: parent.width - 22 - 40 - parent.spacing * 2
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        spacing: 0
+
+                                        Text {
+                                            text: "Focus"
+                                            color: "#e7eef9"
+                                            font.pixelSize: 10
+                                            font.family: textFontFamily
+                                            font.weight: Font.DemiBold
+                                        }
+
+                                        Text {
+                                            text: controlCenter.quickFocusSubtitle
+                                            color: "#9eb0c6"
+                                            font.pixelSize: 8
+                                            font.family: textFontFamily
+                                            font.weight: Font.Medium
+                                            elide: Text.ElideRight
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        width: 40
+                                        height: 20
+                                        radius: 10
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        color: controlCenter.quickFocusMode !== "off" ? "#6b4fa6" : "#2a3548"
+                                        border.width: 0
+
+                                        Behavior on color {
+                                            ColorAnimation {
+                                                duration: controlCenter.quickAnimStateMs
+                                                easing.type: Easing.OutCubic
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            width: 16
+                                            height: 16
+                                            radius: 8
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            x: controlCenter.quickFocusMode !== "off" ? (parent.width - width - 2) : 2
+                                            color: controlCenter.quickFocusMode !== "off" ? "#f4eaff" : "#edf5ff"
+
+                                            Behavior on x {
+                                                NumberAnimation {
+                                                    duration: controlCenter.quickAnimStateMs
+                                                    easing.type: Easing.OutCubic
+                                                }
+                                            }
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            onClicked: {
+                                                mouse.accepted = true;
+                                                controlCenter.quickSetFocusMode(controlCenter.quickFocusMode === "off" ? "dnd" : "off");
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                id: powerTile
+
+                                width: (parent.width - parent.columnSpacing) / 2
+                                height: quickControlsPage.tileHeight
+                                radius: 14
+                                color: controlCenter.quickHasPowerCapability ? "#1a2434" : "#171d28"
+                                border.width: 0
+                                opacity: controlCenter.quickHasPowerCapability ? 1 : 0.55
+                                scale: powerTileTap.pressed ? 0.985 : 1
+
+                                Behavior on color {
+                                    ColorAnimation {
+                                        duration: controlCenter.quickAnimStateMs
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
+
+                                Behavior on scale {
+                                    NumberAnimation {
+                                        duration: controlCenter.quickAnimTapMs
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: powerTileTap
+
+                                    anchors.fill: parent
+                                    enabled: controlCenter.quickHasPowerCapability
+                                    onClicked: controlCenter.quickOpenDetail("power")
+                                }
+
+                                Row {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 9
+                                    anchors.rightMargin: 8
+                                    spacing: 7
+
+                                    Rectangle {
+                                        width: 22
+                                        height: 22
+                                        radius: 11
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        color: "#2a3548"
+
+                                        LucideIcon {
+                                            anchors.centerIn: parent
+                                            width: 12
+                                            height: 12
+                                            iconName: controlCenter.quickPowerProfileIcon(controlCenter.quickPowerProfile)
+                                        }
+                                    }
+
+                                    Column {
+                                        width: parent.width - 22 - 40 - parent.spacing * 2
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        spacing: 0
+
+                                        Text {
+                                            text: "Power"
+                                            color: "#e7eef9"
+                                            font.pixelSize: 10
+                                            font.family: textFontFamily
+                                            font.weight: Font.DemiBold
+                                        }
+
+                                        Text {
+                                            text: controlCenter.quickPowerSubtitle
+                                            color: "#9eb0c6"
+                                            font.pixelSize: 8
+                                            font.family: textFontFamily
+                                            font.weight: Font.Medium
+                                            elide: Text.ElideRight
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        width: 40
+                                        height: 20
+                                        radius: 10
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        color: controlCenter.quickHasPowerProfileCapability ? "#3d81e0" : "#2a3548"
+                                        border.width: 0
+
+                                        Behavior on color {
+                                            ColorAnimation {
+                                                duration: controlCenter.quickAnimStateMs
+                                                easing.type: Easing.OutCubic
+                                            }
+                                        }
+
+                                        LucideIcon {
+                                            anchors.centerIn: parent
+                                            width: 11
+                                            height: 11
+                                            iconName: controlCenter.quickHasPowerProfileCapability
+                                                ? controlCenter.quickPowerProfileIcon(controlCenter.quickPowerProfile)
+                                                : "power"
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            enabled: controlCenter.quickHasPowerProfileCapability
+                                            onClicked: {
+                                                mouse.accepted = true;
+                                                controlCenter.quickCyclePowerProfile();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        visible: controlCenter.quickHasBrightnessCapability
+                        width: parent.width
+                        height: visible ? quickControlsPage.sliderHeight : 0
+                        radius: 14
+                        color: "#151c27"
+                        border.width: 0
+
+                        Row {
+                            anchors.fill: parent
+                            anchors.leftMargin: 10
+                            anchors.rightMargin: 10
+                            spacing: 8
+
+                            LucideIcon {
+                                width: 14
+                                height: 14
+                                anchors.verticalCenter: parent.verticalCenter
+                                iconName: "sun"
+                            }
+
+                            Text {
+                                width: 56
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "Display"
+                                color: "#e7eef9"
+                                font.pixelSize: 11
+                                font.family: textFontFamily
+                                font.weight: Font.DemiBold
+                            }
+
+                            Slider {
+                                id: brightnessSlider
+
+                                width: parent.width - 14 - 56 - 34 - parent.spacing * 3
+                                anchors.verticalCenter: parent.verticalCenter
+                                from: 0
+                                to: 1
+                                enabled: controlCenter.quickHasBrightnessCapability
+                                value: controlCenter.quickBrightnessUi
+
+                                onPressedChanged: {
+                                    controlCenter.quickBrightnessDragging = pressed;
+                                }
+
+                                onMoved: controlCenter.quickSetBrightness(value)
+
+                                background: Rectangle {
+                                    x: 0
+                                    y: parent.height / 2 - height / 2
+                                    width: parent.availableWidth
+                                    height: 8
+                                    radius: 4
+                                    color: "#232f41"
+
+                                    Rectangle {
+                                        width: parent.width * brightnessSlider.visualPosition
+                                        height: parent.height
+                                        radius: parent.radius
+                                        color: "#5f9fff"
+                                    }
+                                }
+
+                                handle: Rectangle {
+                                    x: brightnessSlider.leftPadding + brightnessSlider.visualPosition * (brightnessSlider.availableWidth - width)
+                                    y: brightnessSlider.topPadding + brightnessSlider.availableHeight / 2 - height / 2
+                                    width: 16
+                                    height: 16
+                                    radius: 8
+                                    color: brightnessSlider.pressed ? "#ffffff" : "#f6faff"
+                                    border.width: 0
+                                }
+                            }
+
+                            Text {
+                                width: 34
+                                anchors.verticalCenter: parent.verticalCenter
+                                horizontalAlignment: Text.AlignRight
+                                text: Math.round(controlCenter.quickBrightnessUi * 100) + "%"
+                                color: "#9eb0c6"
+                                font.pixelSize: 9
+                                font.family: textFontFamily
+                                font.weight: Font.DemiBold
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        width: parent.width
+                        height: quickControlsPage.sliderHeight
+                        radius: 14
+                        color: "#151c27"
+                        border.width: 0
+                        opacity: controlCenter.quickHasVolumeCapability ? 1 : 0.6
+
+                        MouseArea {
+                            anchors.fill: parent
+                            enabled: controlCenter.quickHasVolumeCapability
+                            onClicked: controlCenter.quickOpenDetail("audio")
+                        }
+
+                        Row {
+                            anchors.fill: parent
+                            anchors.leftMargin: 10
+                            anchors.rightMargin: 10
+                            spacing: 8
+
+                            LucideIcon {
+                                width: 14
+                                height: 14
+                                anchors.verticalCenter: parent.verticalCenter
+                                iconName: Audio.sink && Audio.sink.audio && Audio.sink.audio.muted ? "volume-x" : "volume-2"
+                            }
+
+                            Text {
+                                width: 56
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "Sound"
+                                color: "#e7eef9"
+                                font.pixelSize: 11
+                                font.family: textFontFamily
+                                font.weight: Font.DemiBold
+                            }
+
+                            Slider {
+                                id: volumeSlider
+
+                                width: parent.width - 14 - 56 - 34 - parent.spacing * 3
+                                anchors.verticalCenter: parent.verticalCenter
+                                from: 0
+                                to: 1
+                                enabled: controlCenter.quickHasVolumeCapability
+                                value: controlCenter.quickVolumeUi
+
+                                onPressedChanged: {
+                                    controlCenter.quickVolumeDragging = pressed;
+                                }
+
+                                onMoved: controlCenter.quickSetVolume(value)
+
+                                background: Rectangle {
+                                    x: 0
+                                    y: parent.height / 2 - height / 2
+                                    width: parent.availableWidth
+                                    height: 8
+                                    radius: 4
+                                    color: "#232f41"
+
+                                    Rectangle {
+                                        width: parent.width * volumeSlider.visualPosition
+                                        height: parent.height
+                                        radius: parent.radius
+                                        color: "#5f9fff"
+                                    }
+                                }
+
+                                handle: Rectangle {
+                                    x: volumeSlider.leftPadding + volumeSlider.visualPosition * (volumeSlider.availableWidth - width)
+                                    y: volumeSlider.topPadding + volumeSlider.availableHeight / 2 - height / 2
+                                    width: 16
+                                    height: 16
+                                    radius: 8
+                                    color: volumeSlider.pressed ? "#ffffff" : "#f6faff"
+                                    border.width: 0
+                                }
+                            }
+
+                            Text {
+                                width: 34
+                                anchors.verticalCenter: parent.verticalCenter
+                                horizontalAlignment: Text.AlignRight
+                                text: Math.round(controlCenter.quickVolumeUi * 100) + "%"
+                                color: "#9eb0c6"
+                                font.pixelSize: 9
+                                font.family: textFontFamily
+                                font.weight: Font.DemiBold
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        visible: controlCenter.quickContextFooter !== ""
+                        width: parent.width
+                        height: visible ? quickControlsPage.footerHeight : 0
+                        radius: 11
+                        color: "#10161f"
+                        border.width: 0
+
+                        Text {
+                            anchors.left: parent.left
+                            anchors.leftMargin: 10
+                            anchors.right: parent.right
+                            anchors.rightMargin: 10
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: controlCenter.quickContextFooter
+                            color: "#8ea1b8"
+                            font.pixelSize: 9
+                            font.family: textFontFamily
+                            font.weight: Font.Medium
+                            elide: Text.ElideRight
+                        }
+                    }
+                }
+
+                Rectangle {
+                    id: quickDetailSheet
+
+                    anchors.fill: parent
+                    z: 20
+                    radius: 16
+                    color: "#0f141d"
+                    border.width: 0
+                    property bool detailOpen: controlCenter.quickDetailPanel !== ""
+                    visible: detailOpen || opacity > 0.01
+                    opacity: detailOpen ? 1 : 0
+                    scale: detailOpen ? 1 : 0.992
+                    y: detailOpen ? 0 : 2
+
+                    Behavior on opacity {
+                        NumberAnimation {
+                            duration: 115
+                            easing.type: Easing.OutCubic
+                        }
+                    }
+
+                    Behavior on scale {
+                        NumberAnimation {
+                            duration: controlCenter.quickAnimStateMs
+                            easing.type: Easing.OutCubic
+                        }
+                    }
+
+                    Behavior on y {
+                        NumberAnimation {
+                            duration: controlCenter.quickAnimStateMs
+                            easing.type: Easing.OutCubic
+                        }
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        acceptedButtons: Qt.AllButtons
+                        hoverEnabled: true
+                        preventStealing: true
+                        onPressed: mouse => mouse.accepted = true
+                        onReleased: mouse => mouse.accepted = true
+                        onClicked: mouse => mouse.accepted = true
+                        onWheel: wheel => wheel.accepted = true
+                    }
+
+                    Column {
+                        z: 1
+                        anchors.fill: parent
+                        anchors.margins: 10
+                        spacing: 8
+
+                        Row {
+                            width: parent.width
+                            height: 22
+                            spacing: 8
+
+                            Rectangle {
+                                width: 28
+                                height: 22
+                                radius: 11
+                                color: "#1a2432"
+                                border.width: 0
+
+                                LucideIcon {
+                                    anchors.centerIn: parent
+                                    width: 12
+                                    height: 12
+                                    iconName: "chevron-left"
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    onClicked: controlCenter.quickCloseDetail()
+                                }
+                            }
+
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: controlCenter.quickDetailPanel === "network"
+                                    ? "Network"
+                                    : (controlCenter.quickDetailPanel === "bluetooth"
+                                        ? "Bluetooth"
+                                        : (controlCenter.quickDetailPanel === "focus"
+                                            ? "Focus"
+                                            : (controlCenter.quickDetailPanel === "power" ? "Power" : "Sound")))
+                                color: "#e7eef9"
+                                font.pixelSize: 12
+                                font.family: textFontFamily
+                                font.weight: Font.DemiBold
+                            }
+                        }
+
+                        Flickable {
+                            id: quickDetailFlick
+
+                            width: parent.width
+                            height: parent.height - 22 - parent.spacing
+                            clip: true
+                            boundsBehavior: Flickable.DragOverBounds
+                            contentWidth: width
+                            contentHeight: quickDetailLoader.item ? Math.max(height, quickDetailLoader.item.implicitHeight) : height
+                            interactive: contentHeight > height
+
+                            Loader {
+                                id: quickDetailLoader
+
+                                width: quickDetailFlick.width
+                                sourceComponent: controlCenter.quickDetailPanel === "network"
+                                    ? networkDetailComponent
+                                    : (controlCenter.quickDetailPanel === "bluetooth"
+                                        ? bluetoothDetailComponent
+                                        : (controlCenter.quickDetailPanel === "focus"
+                                            ? focusDetailComponent
+                                            : (controlCenter.quickDetailPanel === "power"
+                                                ? powerDetailComponent
+                                                : audioDetailComponent)))
+                            }
+                        }
+                    }
+
+                    Component {
+                        id: networkDetailComponent
+
+                        Column {
+                            width: quickDetailLoader.width
+                            spacing: 7
+
+                            Rectangle {
+                                width: parent.width
+                                height: 66
+                                radius: 12
+                                color: "#151c27"
+                                border.width: 0
+                                opacity: controlCenter.quickHasWifiCapability ? 1 : 0.6
+
+                                Row {
+                                    anchors.left: parent.left
+                                    anchors.leftMargin: 10
+                                    anchors.right: parent.right
+                                    anchors.rightMargin: 10
+                                    anchors.top: parent.top
+                                    anchors.topMargin: 9
+                                    spacing: 8
+
+                                    Rectangle {
+                                        width: 22
+                                        height: 22
+                                        radius: 11
+                                        color: "#2d4f80"
+
+                                        LucideIcon {
+                                            anchors.centerIn: parent
+                                            width: 12
+                                            height: 12
+                                            iconName: controlCenter.quickWifiUiEnabled ? "wifi" : "wifi-off"
+                                        }
+                                    }
+
+                                    Column {
+                                        width: parent.width - 22 - 40 - parent.spacing * 2
+                                        spacing: 0
+
+                                        Text {
+                                            text: "Wi-Fi"
+                                            color: "#e7eef9"
+                                            font.pixelSize: 10
+                                            font.family: textFontFamily
+                                            font.weight: Font.DemiBold
+                                        }
+
+                                        Text {
+                                            text: controlCenter.quickNetworkSubtitle
+                                            color: "#9eb0c6"
+                                            font.pixelSize: 8
+                                            font.family: textFontFamily
+                                            font.weight: Font.Medium
+                                            elide: Text.ElideRight
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        width: 40
+                                        height: 20
+                                        radius: 10
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        color: controlCenter.quickCanToggleWifi && controlCenter.quickWifiUiEnabled ? "#3d81e0" : "#2a3548"
+                                        border.width: 0
+
+                                        Behavior on color {
+                                            ColorAnimation {
+                                                duration: controlCenter.quickAnimStateMs
+                                                easing.type: Easing.OutCubic
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            width: 16
+                                            height: 16
+                                            radius: 8
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            x: controlCenter.quickCanToggleWifi && controlCenter.quickWifiUiEnabled ? (parent.width - width - 2) : 2
+                                            color: "#edf5ff"
+
+                                            Behavior on x {
+                                                NumberAnimation {
+                                                    duration: controlCenter.quickAnimStateMs
+                                                    easing.type: Easing.OutCubic
+                                                }
+                                            }
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            enabled: controlCenter.quickCanToggleWifi
+                                            onClicked: controlCenter.quickToggleNetwork()
+                                        }
+                                    }
+                                }
+
+                                Row {
+                                    anchors.left: parent.left
+                                    anchors.leftMargin: 10
+                                    anchors.right: parent.right
+                                    anchors.rightMargin: 10
+                                    anchors.bottom: parent.bottom
+                                    anchors.bottomMargin: 8
+                                    spacing: 6
+
+                                    Rectangle {
+                                        width: Math.floor((parent.width - parent.spacing) / 2)
+                                        height: 20
+                                        radius: 10
+                                        color: "#202938"
+
+                                        Row {
+                                            anchors.centerIn: parent
+                                            spacing: 4
+
+                                            LucideIcon {
+                                                width: 10
+                                                height: 10
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                iconName: "globe"
+                                            }
+
+                                            Text {
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                text: controlCenter.quickNetworkConnectivity
+                                                color: controlCenter.quickNetworkConnectivity === "No internet" ? "#f2c17a" : "#a7b8cc"
+                                                font.pixelSize: 7
+                                                font.family: textFontFamily
+                                                font.weight: Font.Medium
+                                            }
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        width: parent.width - Math.floor((parent.width - parent.spacing) / 2) - parent.spacing
+                                        height: 20
+                                        radius: 10
+                                        color: "#202938"
+
+                                        Row {
+                                            anchors.centerIn: parent
+                                            spacing: 4
+
+                                            LucideIcon {
+                                                width: 10
+                                                height: 10
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                iconName: "signal"
+                                            }
+
+                                            Text {
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                text: controlCenter.quickNetworkSignalStrength + "%"
+                                                color: "#a7b8cc"
+                                                font.pixelSize: 7
+                                                font.family: textFontFamily
+                                                font.weight: Font.Medium
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Repeater {
+                                model: controlCenter.quickHasWifiCapability ? Math.min(5, Network.friendlyWifiNetworks.length) : 0
+
+                                delegate: Rectangle {
+                                    required property int index
+
+                                    readonly property var net: Network.friendlyWifiNetworks[index]
+                                    width: quickDetailLoader.width
+                                    height: 36
+                                    radius: 11
+                                    color: net && net.active ? "#1a2a43" : "#151c27"
+                                    border.width: 0
+                                    scale: networkRowTap.pressed ? 0.988 : 1
+
+                                    Behavior on color {
+                                        ColorAnimation {
+                                            duration: controlCenter.quickAnimStateMs
+                                            easing.type: Easing.OutCubic
+                                        }
+                                    }
+
+                                    Behavior on scale {
+                                        NumberAnimation {
+                                            duration: controlCenter.quickAnimTapMs
+                                            easing.type: Easing.OutCubic
+                                        }
+                                    }
+
+                                    Row {
+                                        anchors.fill: parent
+                                        anchors.leftMargin: 8
+                                        anchors.rightMargin: 8
+                                        spacing: 8
+
+                                        Rectangle {
+                                            width: 20
+                                            height: 20
+                                            radius: 10
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            color: net && net.active ? "#2f68b2" : "#243044"
+
+                                            LucideIcon {
+                                                anchors.centerIn: parent
+                                                width: 11
+                                                height: 11
+                                                iconName: net && net.active ? "wifi" : "wifi-off"
+                                            }
+                                        }
+
+                                        Column {
+                                            width: parent.width - 20 - 64 - parent.spacing * 2
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            spacing: 0
+
+                                            Text {
+                                                text: net && net.ssid ? net.ssid : "Unknown"
+                                                color: "#e7eef9"
+                                                font.pixelSize: 9
+                                                font.family: textFontFamily
+                                                font.weight: Font.Medium
+                                                elide: Text.ElideRight
+                                            }
+
+                                            Text {
+                                                text: (net && net.active ? "Connected" : (net && net.security ? "Secured" : "Open"))
+                                                    + (net && net.strength >= 0 ? (" · " + Math.round(net.strength) + "%") : "")
+                                                color: "#97a9c0"
+                                                font.pixelSize: 7
+                                                font.family: textFontFamily
+                                                font.weight: Font.Medium
+                                                elide: Text.ElideRight
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            width: 64
+                                            height: 20
+                                            radius: 10
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            color: net && net.active ? "#3d81e0" : "#2a3548"
+                                            border.width: 0
+
+                                            Text {
+                                                anchors.centerIn: parent
+                                                text: net && net.active ? "Disconnect" : "Connect"
+                                                color: "#e8f1fb"
+                                                font.pixelSize: 7
+                                                font.family: textFontFamily
+                                                font.weight: Font.DemiBold
+                                            }
+                                        }
+                                    }
+
+                                    MouseArea {
+                                        id: networkRowTap
+
+                                        anchors.fill: parent
+                                        onClicked: {
+                                            if (!net)
+                                                return;
+                                            if (net.active)
+                                                Network.disconnectWifiNetwork();
+                                            else
+                                                Network.connectToWifiNetwork(net);
+                                        }
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                width: quickDetailLoader.width
+                                height: 30
+                                radius: 10
+                                visible: !controlCenter.quickHasWifiCapability
+                                color: "#151c27"
+                                border.width: 0
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "Network controls unavailable"
+                                    color: "#9eb0c6"
+                                    font.pixelSize: 9
+                                    font.family: textFontFamily
+                                    font.weight: Font.Medium
+                                }
+                            }
+                        }
+                    }
+
+                    Component {
+                        id: bluetoothDetailComponent
+
+                        Column {
+                            spacing: 7
+
+                            Rectangle {
+                                width: quickDetailLoader.width
+                                height: 34
+                                radius: 12
+                                color: "#151c27"
+                                border.width: 0
+                                opacity: controlCenter.quickHasBluetoothCapability ? 1 : 0.6
+
+                                Row {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 10
+                                    anchors.rightMargin: 10
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    spacing: 8
+
+                                    Text {
+                                        text: "Bluetooth"
+                                        color: "#e7eef9"
+                                        font.pixelSize: 10
+                                        font.family: textFontFamily
+                                        font.weight: Font.DemiBold
+                                    }
+
+                                    Rectangle {
+                                        width: 40
+                                        height: 20
+                                        radius: 10
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        color: controlCenter.quickBluetoothUiEnabled ? "#3d81e0" : "#2a3548"
+                                        border.width: 0
+
+                                        Behavior on color {
+                                            ColorAnimation {
+                                                duration: controlCenter.quickAnimStateMs
+                                                easing.type: Easing.OutCubic
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            width: 16
+                                            height: 16
+                                            radius: 8
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            x: controlCenter.quickBluetoothUiEnabled ? (parent.width - width - 2) : 2
+                                            color: "#edf5ff"
+
+                                            Behavior on x {
+                                                NumberAnimation {
+                                                    duration: controlCenter.quickAnimStateMs
+                                                    easing.type: Easing.OutCubic
+                                                }
+                                            }
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            enabled: controlCenter.quickHasBluetoothCapability
+                                            onClicked: controlCenter.quickToggleBluetooth()
+                                        }
+                                    }
+                                }
+                            }
+
+                            Repeater {
+                                model: controlCenter.quickHasBluetoothCapability ? Math.min(5, BluetoothStatus.friendlyDeviceList.length) : 0
+
+                                delegate: Rectangle {
+                                    required property int index
+
+                                    readonly property var device: BluetoothStatus.friendlyDeviceList[index]
+                                    width: quickDetailLoader.width
+                                    height: 32
+                                    radius: 11
+                                    color: device && device.connected ? "#1a2a43" : "#151c27"
+                                    border.width: 0
+                                    scale: bluetoothRowTap.pressed ? 0.988 : 1
+
+                                    Behavior on color {
+                                        ColorAnimation {
+                                            duration: controlCenter.quickAnimStateMs
+                                            easing.type: Easing.OutCubic
+                                        }
+                                    }
+
+                                    Behavior on scale {
+                                        NumberAnimation {
+                                            duration: controlCenter.quickAnimTapMs
+                                            easing.type: Easing.OutCubic
+                                        }
+                                    }
+
+                                    Row {
+                                        anchors.fill: parent
+                                        anchors.leftMargin: 9
+                                        anchors.rightMargin: 9
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        spacing: 8
+
+                                        Text {
+                                            width: parent.width - 70
+                                            text: device && device.name ? device.name : "Unknown"
+                                            color: "#e7eef9"
+                                            font.pixelSize: 9
+                                            font.family: textFontFamily
+                                            font.weight: Font.Medium
+                                            elide: Text.ElideRight
+                                        }
+
+                                        Rectangle {
+                                            width: 58
+                                            height: 20
+                                            radius: 10
+                                            color: device && device.connected ? "#3d81e0" : "#2a3548"
+                                            border.width: 0
+
+                                            Text {
+                                                anchors.centerIn: parent
+                                                text: device && device.connected ? "Disconnect" : "Connect"
+                                                color: "#e8f1fb"
+                                                font.pixelSize: 7
+                                                font.family: textFontFamily
+                                                font.weight: Font.DemiBold
+                                            }
+                                        }
+                                    }
+
+                                    MouseArea {
+                                        id: bluetoothRowTap
+
+                                        anchors.fill: parent
+                                        onClicked: {
+                                            if (!device)
+                                                return;
+                                            if (device.connected)
+                                                device.disconnect();
+                                            else if (device.paired)
+                                                device.connect();
+                                            else
+                                                device.pair();
+                                        }
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                width: quickDetailLoader.width
+                                height: 30
+                                radius: 10
+                                visible: !controlCenter.quickHasBluetoothCapability
+                                color: "#151c27"
+                                border.width: 0
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "Bluetooth unavailable"
+                                    color: "#9eb0c6"
+                                    font.pixelSize: 9
+                                    font.family: textFontFamily
+                                    font.weight: Font.Medium
+                                }
+                            }
+                        }
+                    }
+
+                    Component {
+                        id: focusDetailComponent
+
+                        Column {
+                            width: quickDetailLoader.width
+                            spacing: 7
+
+                            Rectangle {
+                                width: parent.width
+                                height: 34
+                                radius: 11
+                                color: "#151c27"
+                                border.width: 0
+
+                                Row {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 10
+                                    anchors.rightMargin: 10
+                                    spacing: 7
+
+                                    Rectangle {
+                                        width: 20
+                                        height: 20
+                                        radius: 10
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        color: "#2a3548"
+
+                                        LucideIcon {
+                                            anchors.centerIn: parent
+                                            width: 11
+                                            height: 11
+                                            iconName: controlCenter.quickFocusModeIcon(controlCenter.quickFocusMode)
+                                        }
+                                    }
+
+                                    Text {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: "Focus: " + controlCenter.quickFocusModeLabel(controlCenter.quickFocusMode)
+                                        color: "#e7eef9"
+                                        font.pixelSize: 10
+                                        font.family: textFontFamily
+                                        font.weight: Font.DemiBold
+                                    }
+                                }
+                            }
+
+                            Grid {
+                                width: parent.width
+                                columns: 2
+                                rowSpacing: 7
+                                columnSpacing: 7
+
+                                Repeater {
+                                    model: [
+                                        { key: "off", label: "Off", icon: "bell-off" },
+                                        { key: "dnd", label: "DND", icon: "moon" },
+                                        { key: "work", label: "Work", icon: "briefcase" },
+                                        { key: "meeting", label: "Meeting", icon: "calendar" },
+                                        { key: "gaming", label: "Gaming", icon: "gamepad-2" }
+                                    ]
+
+                                    delegate: Rectangle {
+                                        required property var modelData
+
+                                        readonly property string modeKey: String(modelData.key)
+                                        readonly property bool active: controlCenter.quickFocusMode === modeKey
+                                        width: (quickDetailLoader.width - 7) / 2
+                                        height: 38
+                                        radius: 11
+                                        color: active ? "#304d77" : "#151c27"
+                                        border.width: active ? 1 : 0
+                                        border.color: "#8fb5e5"
+                                        scale: modeTap.pressed ? 0.97 : 1
+
+                                        Behavior on scale {
+                                            NumberAnimation {
+                                                duration: controlCenter.quickAnimTapMs
+                                                easing.type: Easing.OutCubic
+                                            }
+                                        }
+
+                                        Behavior on color {
+                                            ColorAnimation {
+                                                duration: controlCenter.quickAnimStateMs
+                                                easing.type: Easing.OutCubic
+                                            }
+                                        }
+
+                                        Row {
+                                            anchors.centerIn: parent
+                                            spacing: 6
+
+                                            LucideIcon {
+                                                width: 12
+                                                height: 12
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                iconName: String(modelData.icon)
+                                            }
+
+                                            Text {
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                text: String(modelData.label)
+                                                color: "#e7eef9"
+                                                font.pixelSize: 9
+                                                font.family: textFontFamily
+                                                font.weight: active ? Font.Bold : Font.DemiBold
+                                            }
+                                        }
+
+                                        MouseArea {
+                                            id: modeTap
+
+                                            anchors.fill: parent
+                                            onClicked: controlCenter.quickSetFocusMode(modeKey)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Component {
+                        id: powerDetailComponent
+
+                        Column {
+                            width: quickDetailLoader.width
+                            spacing: 7
+
+                            Rectangle {
+                                width: parent.width
+                                height: 34
+                                radius: 11
+                                color: "#151c27"
+                                border.width: 0
+
+                                Row {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 10
+                                    anchors.rightMargin: 10
+                                    spacing: 7
+
+                                    Rectangle {
+                                        width: 20
+                                        height: 20
+                                        radius: 10
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        color: "#2a3548"
+
+                                        LucideIcon {
+                                            anchors.centerIn: parent
+                                            width: 11
+                                            height: 11
+                                            iconName: "power"
+                                        }
+                                    }
+
+                                    Text {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: controlCenter.quickPowerSubtitle
+                                        color: "#e7eef9"
+                                        font.pixelSize: 10
+                                        font.family: textFontFamily
+                                        font.weight: Font.DemiBold
+                                        elide: Text.ElideRight
+                                    }
+                                }
+                            }
+
+                            Text {
+                                text: "Performance Mode"
+                                color: "#9eb0c6"
+                                font.pixelSize: 8
+                                font.family: textFontFamily
+                                font.weight: Font.Medium
+                            }
+
+                            Row {
+                                width: parent.width
+                                spacing: 7
+
+                                Repeater {
+                                    model: ["power-saver", "balanced", "performance"]
+
+                                    delegate: Rectangle {
+                                        required property var modelData
+
+                                        readonly property string profileKey: String(modelData)
+                                        readonly property bool active: controlCenter.quickPowerProfile === profileKey
+                                        width: (quickDetailLoader.width - 14) / 3
+                                        height: 44
+                                        radius: 11
+                                        color: active ? "#31527f" : "#151c27"
+                                        border.width: active ? 1 : 0
+                                        border.color: "#8fb5e5"
+                                        opacity: controlCenter.quickHasPowerProfileCapability ? 1 : 0.45
+                                        scale: profileTap.pressed ? 0.97 : 1
+
+                                        Behavior on color {
+                                            ColorAnimation {
+                                                duration: controlCenter.quickAnimStateMs
+                                                easing.type: Easing.OutCubic
+                                            }
+                                        }
+
+                                        Behavior on scale {
+                                            NumberAnimation {
+                                                duration: controlCenter.quickAnimTapMs
+                                                easing.type: Easing.OutCubic
+                                            }
+                                        }
+
+                                        Column {
+                                            anchors.centerIn: parent
+                                            spacing: 2
+
+                                            LucideIcon {
+                                                anchors.horizontalCenter: parent.horizontalCenter
+                                                width: 12
+                                                height: 12
+                                                iconName: controlCenter.quickPowerProfileIcon(profileKey)
+                                            }
+
+                                            Text {
+                                                anchors.horizontalCenter: parent.horizontalCenter
+                                                text: controlCenter.quickPowerProfilePretty(profileKey)
+                                                color: "#e8f1fb"
+                                                font.pixelSize: 7
+                                                font.family: textFontFamily
+                                                font.weight: active ? Font.Bold : Font.DemiBold
+                                            }
+                                        }
+
+                                        MouseArea {
+                                            id: profileTap
+
+                                            anchors.fill: parent
+                                            enabled: controlCenter.quickHasPowerProfileCapability
+                                            onClicked: controlCenter.quickSetPowerProfile(profileKey)
+                                        }
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                width: parent.width
+                                height: 24
+                                radius: 10
+                                color: "#151c27"
+                                border.width: 0
+
+                                Text {
+                                    anchors.left: parent.left
+                                    anchors.leftMargin: 10
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: controlCenter.quickPowerProfileDescription(controlCenter.quickPowerProfile)
+                                    color: "#94a7be"
+                                    font.pixelSize: 8
+                                    font.family: textFontFamily
+                                    font.weight: Font.Medium
+                                    elide: Text.ElideRight
+                                }
+                            }
+
+                            Rectangle {
+                                width: parent.width
+                                height: 34
+                                radius: 11
+                                color: "#151c27"
+                                border.width: 0
+
+                                Row {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 10
+                                    anchors.rightMargin: 10
+                                    spacing: 7
+
+                                    Rectangle {
+                                        width: 20
+                                        height: 20
+                                        radius: 10
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        color: controlCenter.quickNightLightUiActive ? "#5a4a2d" : "#2a3548"
+
+                                        LucideIcon {
+                                            anchors.centerIn: parent
+                                            width: 11
+                                            height: 11
+                                            iconName: "moon"
+                                        }
+                                    }
+
+                                    Column {
+                                        width: parent.width - 20 - 40 - parent.spacing * 2
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        spacing: 0
+
+                                        Text {
+                                            text: "Night Light"
+                                            color: "#e7eef9"
+                                            font.pixelSize: 9
+                                            font.family: textFontFamily
+                                            font.weight: Font.DemiBold
+                                        }
+
+                                        Text {
+                                            text: controlCenter.quickNightLightUiActive ? "On" : "Off"
+                                            color: controlCenter.quickNightLightUiActive ? "#e7c37a" : "#9eb0c6"
+                                            font.pixelSize: 7
+                                            font.family: textFontFamily
+                                            font.weight: Font.Medium
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        width: 40
+                                        height: 20
+                                        radius: 10
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        color: controlCenter.quickNightLightUiActive ? "#3d81e0" : "#2a3548"
+
+                                        Behavior on color {
+                                            ColorAnimation {
+                                                duration: controlCenter.quickAnimStateMs
+                                                easing.type: Easing.OutCubic
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            width: 16
+                                            height: 16
+                                            radius: 8
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            x: controlCenter.quickNightLightUiActive ? (parent.width - width - 2) : 2
+                                            color: "#edf5ff"
+
+                                            Behavior on x {
+                                                NumberAnimation {
+                                                    duration: controlCenter.quickAnimStateMs
+                                                    easing.type: Easing.OutCubic
+                                                }
+                                            }
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            onClicked: controlCenter.quickToggleNightLight()
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Component {
+                        id: audioDetailComponent
+
+                        Column {
+                            spacing: 7
+
+                            Rectangle {
+                                width: quickDetailLoader.width
+                                height: 34
+                                radius: 12
+                                color: "#151c27"
+                                border.width: 0
+
+                                Row {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 10
+                                    anchors.rightMargin: 10
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    spacing: 8
+
+                                    Text {
+                                        text: "Mic"
+                                        color: "#e7eef9"
+                                        font.pixelSize: 10
+                                        font.family: textFontFamily
+                                        font.weight: Font.DemiBold
+                                    }
+
+                                    Rectangle {
+                                        width: 56
+                                        height: 22
+                                        radius: 11
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        color: (Audio.source && Audio.source.audio && !Audio.source.audio.muted) ? "#3d81e0" : "#2a3548"
+                                        border.width: 0
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: (Audio.source && Audio.source.audio && !Audio.source.audio.muted) ? "On" : "Muted"
+                                            color: "#e8f1fb"
+                                            font.pixelSize: 8
+                                            font.family: textFontFamily
+                                            font.weight: Font.DemiBold
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            onClicked: Audio.toggleMicMute()
+                                        }
+                                    }
+                                }
+                            }
+
+                            Repeater {
+                                model: Math.min(5, Audio.outputDevices.length)
+
+                                delegate: Rectangle {
+                                    required property int index
+
+                                    readonly property var node: Audio.outputDevices[index]
+                                    readonly property bool active: Audio.sink === node
+
+                                    width: quickDetailLoader.width
+                                    height: 32
+                                    radius: 11
+                                    color: active ? "#1a2a43" : "#151c27"
+                                    border.width: 0
+
+                                    Text {
+                                        anchors.left: parent.left
+                                        anchors.leftMargin: 10
+                                        anchors.right: parent.right
+                                        anchors.rightMargin: 10
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: Audio.friendlyDeviceName(node)
+                                        color: "#e7eef9"
+                                        font.pixelSize: 9
+                                        font.family: textFontFamily
+                                        font.weight: Font.Medium
+                                        elide: Text.ElideRight
+                                    }
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        onClicked: {
+                                            if (node)
+                                                Audio.setDefaultSink(node);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         DragHandler {
             id: pageSwipeHandler
 
-            enabled: !controlCenter.compactMode
+            enabled: !controlCenter.compactMode && controlCenter.quickDetailPanel === ""
             target: null
             acceptedButtons: Qt.LeftButton
             grabPermissions: PointerHandler.CanTakeOverFromAnything | PointerHandler.ApprovesTakeOverByAnything
@@ -1555,13 +3730,16 @@ Item {
                 currentDelta = translation.y;
                 const overTop = controlCenter.pageIndex === 0 && currentDelta > 0;
                 const overBottom = controlCenter.pageIndex === controlCenter.pageCount - 1 && currentDelta < 0;
-                controlCenter.dragOffset = (overTop || overBottom) ? currentDelta * 0.34 : currentDelta;
+                controlCenter.dragOffset = (overTop || overBottom) ? currentDelta * 0.22 : currentDelta;
             }
         }
     }
 
     Column {
-        visible: !controlCenter.compactMode && controlCenter.pageCount > 1
+        visible: !controlCenter.compactMode
+            && controlCenter.pageCount > 1
+            && controlCenter.pageIndex !== controlCenter.quickControlsPageIndex
+            && controlCenter.quickDetailPanel === ""
         anchors.right: parent.right
         anchors.rightMargin: 12
         anchors.verticalCenter: parent.verticalCenter
