@@ -557,6 +557,7 @@ Item {
         property real currentVolume: Math.max(0, Math.min(1, adapter.volumePercent / 100.0))
         property real currentBrightness: Math.max(0, Math.min(1, adapter.brightnessPercent / 100.0))
         property string notificationAppName: ""
+        property string notificationAppIcon: ""
         property string notificationSummary: ""
         property string notificationBody: ""
         property string _lastChargeStatus: adapter.batteryStatusString
@@ -755,6 +756,7 @@ Item {
             setOsdProgress(-1.0, false);
             osdCustomText = "";
             notificationAppName = "";
+            notificationAppIcon = "";
             notificationSummary = "";
             notificationBody = "";
         }
@@ -911,7 +913,10 @@ Item {
             restartAutoHideTimer();
         }
 
-        function showNotificationCapsule(appName, summary, body) {
+        function showNotificationCapsule(appName, appIcon, summary, body) {
+            if (Notifications.silent)
+                return;
+
             if (root.overviewVisible || islandState === "control_center" || islandState === "expanded")
                 return;
 
@@ -925,6 +930,7 @@ Item {
             abortLyricsTransientMode();
             clearTransientCapsule();
             notificationAppName = cleanedAppName !== "" ? cleanedAppName : Translation.tr("Notification");
+            notificationAppIcon = String(appIcon === undefined || appIcon === null ? "" : appIcon).trim();
             notificationSummary = resolvedSummary;
             notificationBody = cleanedSummary !== "" ? cleanedBody : "";
             islandState = "notification";
@@ -1197,7 +1203,12 @@ Item {
             target: Notifications
 
             function onNotify(notification) {
-                islandContainer.showNotificationCapsule(notification.appName, notification.summary, notification.body);
+                islandContainer.showNotificationCapsule(notification.appName, notification.appIcon, notification.summary, notification.body);
+            }
+
+            function onSilentChanged() {
+                if (Notifications.silent && islandContainer.islandState === "notification")
+                    islandContainer.smartRestoreState();
             }
         }
 
@@ -1855,6 +1866,7 @@ Item {
         NotificationLayer {
             id: notificationLayer
             appName: islandContainer.notificationAppName
+            appIcon: islandContainer.notificationAppIcon
             summary: islandContainer.notificationSummary
             body: islandContainer.notificationBody
             iconText: userConfig.statusIcons["notification"]
