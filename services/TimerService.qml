@@ -64,7 +64,7 @@ Singleton {
             }
 
             Quickshell.execDetached(["notify-send", "Pomodoro", notificationMessage, "-a", "Shell"]);
-            if (Config.options.sounds.pomodoro) {
+            if (Config.options.sounds.pomodoro && !Notifications.silent) {
                 Audio.playSystemSound("alarm-clock-elapsed")
             }
 

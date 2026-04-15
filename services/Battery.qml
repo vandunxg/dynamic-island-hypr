@@ -61,7 +61,7 @@ Singleton {
             "--hint=int:transient:1",
         ])
 
-        if (root.soundEnabled) Audio.playSystemSound("dialog-warning");
+        if (root.soundEnabled && !Notifications.silent) Audio.playSystemSound("dialog-warning");
     }
 
     onIsCriticalAndNotChargingChanged: {
@@ -75,7 +75,7 @@ Singleton {
             "--hint=int:transient:1",
         ]);
 
-        if (root.soundEnabled) Audio.playSystemSound("suspend-error");
+        if (root.soundEnabled && !Notifications.silent) Audio.playSystemSound("suspend-error");
     }
 
     onIsSuspendingAndNotChargingChanged: {
@@ -94,11 +94,11 @@ Singleton {
             "--hint=int:transient:1",
         ]);
 
-        if (root.soundEnabled) Audio.playSystemSound("complete");
+        if (root.soundEnabled && !Notifications.silent) Audio.playSystemSound("complete");
     }
 
     onIsPluggedInChanged: {
-        if (!root.available || !root.soundEnabled) return;
+        if (!root.available || !root.soundEnabled || Notifications.silent) return;
         if (isPluggedIn) {
             Audio.playSystemSound("power-plug")
         } else {
