@@ -121,6 +121,20 @@ Item {
     readonly property real estimatedCpuTempC: Math.max(36, Math.min(95, 38 + cpuUsagePercent * 0.38 + swapUsagePercent * 0.08))
     readonly property real cpuTempRatio: Math.max(0, Math.min(1, estimatedCpuTempC / 100.0))
     readonly property real memoryRatio: Math.max(0, Math.min(1, memoryUsagePercent / 100.0))
+    readonly property real systemBatteryRatio: {
+        if (quickHasBatteryCapability && Number.isFinite(Number(Battery.percentage)))
+            return Math.max(0, Math.min(1, Number(Battery.percentage)));
+        return Math.max(0, Math.min(1, Number(batteryCapacity) / 100));
+    }
+    readonly property int systemBatteryPercent: Math.round(systemBatteryRatio * 100)
+    readonly property bool systemBatteryLow: quickHasBatteryCapability && systemBatteryPercent < 20
+    readonly property string systemBatteryStatus: {
+        if (!quickHasBatteryCapability)
+            return "No battery";
+        if (isCharging)
+            return "Charging";
+        return systemBatteryLow ? "Low (<20%)" : "Normal (>20%)";
+    }
     readonly property string memoryPercentText: Number(memoryUsagePercent).toFixed(1) + "%"
     readonly property string cpuLoadStatus: cpuUsagePercent >= 85 ? "High" : (cpuUsagePercent >= 60 ? "Moderate" : "Good")
     readonly property string cpuTempStatus: estimatedCpuTempC >= 78 ? "Hot" : (estimatedCpuTempC >= 64 ? "Warm" : "Good")
@@ -1748,26 +1762,16 @@ Item {
 
                     Item {
                         width: parent.width
-                        height: 30
+                        height: 22
 
                         Text {
                             anchors.left: parent.left
-                            anchors.top: parent.top
-                            text: "Performance"
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "System Overview"
                             color: "#f4f6fa"
                             font.pixelSize: 16
                             font.family: textFontFamily
                             font.weight: Font.DemiBold
-                        }
-
-                        Text {
-                            anchors.left: parent.left
-                            anchors.bottom: parent.bottom
-                            text: "See your console's current performance"
-                            color: "#9399a5"
-                            font.pixelSize: 9
-                            font.family: textFontFamily
-                            font.weight: Font.Medium
                         }
                     }
 
@@ -1775,11 +1779,11 @@ Item {
                         id: performanceRow
 
                         width: parent.width
-                        height: parent.height - 30 - parent.spacing
-                        spacing: 8
+                        height: parent.height - 22 - parent.spacing
+                        spacing: 6
 
                         Repeater {
-                            model: 3
+                            model: 4
 
                             delegate: Item {
                                 id: metricCard
@@ -1788,31 +1792,59 @@ Item {
 
                                 readonly property bool cpuCard: index === 0
                                 readonly property bool tempCard: index === 1
+                                readonly property bool memoryCard: index === 2
+                                readonly property bool batteryCard: index === 3
+                                readonly property color statusGoodColor: "#4fd18f"
+                                readonly property color statusWarnColor: "#f2be57"
+                                readonly property color statusDangerColor: "#ff6b6b"
+                                readonly property color statusNeutralColor: "#95a3b7"
                                 readonly property color ringColor: cpuCard
-                                    ? "#ff4b5c"
-                                    : (tempCard ? "#33ce76" : "#2fcf7f")
-                                readonly property string iconName: cpuCard
-                                    ? "cpu"
-                                    : (tempCard ? "thermometer" : "memory-stick")
-                                readonly property real ringSize: Math.max(48, Math.min(56, performanceRow.height * 0.52))
+                                    ? (controlCenter.cpuUsagePercent >= 80
+                                        ? statusDangerColor
+                                        : (controlCenter.cpuUsagePercent >= 55 ? statusWarnColor : statusGoodColor))
+                                    : (tempCard
+                                        ? (controlCenter.estimatedCpuTempC >= 78
+                                            ? statusDangerColor
+                                            : (controlCenter.estimatedCpuTempC >= 64 ? statusWarnColor : statusGoodColor))
+                                        : (memoryCard
+                                            ? (controlCenter.memoryUsagePercent >= 85
+                                                ? statusDangerColor
+                                                : (controlCenter.memoryUsagePercent >= 65 ? statusWarnColor : statusGoodColor))
+                                            : (!controlCenter.quickHasBatteryCapability
+                                                ? statusNeutralColor
+                                                : (controlCenter.systemBatteryPercent <= 20
+                                                    ? statusDangerColor
+                                                    : (controlCenter.systemBatteryPercent <= 35 ? statusWarnColor : statusGoodColor)))))
+                                readonly property color valueColor: batteryCard && !controlCenter.quickHasBatteryCapability
+                                    ? statusNeutralColor
+                                    : ringColor
+                                readonly property real ringSize: Math.max(44, Math.min(50, performanceRow.height * 0.45))
                                 readonly property real progressValue: cpuCard
                                     ? controlCenter.cpuLoadRatio
-                                    : (tempCard ? controlCenter.cpuTempRatio : controlCenter.memoryRatio)
+                                    : (tempCard
+                                        ? controlCenter.cpuTempRatio
+                                        : (memoryCard
+                                            ? controlCenter.memoryRatio
+                                            : controlCenter.systemBatteryRatio))
                                 property real animatedProgress: progressValue
                                 readonly property real percentageValue: animatedProgress * 100
-                                readonly property string centerPercentText: tempCard
-                                    ? (Math.round(percentageValue) + "%")
-                                    : (cpuCard ? (Math.round(percentageValue) + "%") : (percentageValue.toFixed(1) + "%"))
+                                readonly property string centerPercentText: batteryCard
+                                    ? (controlCenter.quickHasBatteryCapability ? (Math.round(percentageValue) + "%") : "N/A")
+                                    : (tempCard
+                                        ? (Math.round(controlCenter.estimatedCpuTempC) + "°C")
+                                        : (cpuCard ? (Math.round(percentageValue) + "%") : (Math.round(percentageValue) + "%")))
                                 readonly property string titleText: cpuCard
-                                    ? "CPU Load"
-                                    : (tempCard ? "CPU Temp" : "Memory")
+                                    ? "CPU"
+                                    : (tempCard ? "Temp" : (memoryCard ? "Memory" : "Battery"))
                                 readonly property string footerText: cpuCard
                                     ? controlCenter.cpuLoadStatus
                                     : (tempCard
-                                        ? (Math.round(controlCenter.estimatedCpuTempC) + "°C • " + controlCenter.cpuTempStatus)
-                                        : controlCenter.memoryUsageLabel)
+                                        ? controlCenter.cpuTempStatus
+                                        : (memoryCard
+                                            ? (Math.round(controlCenter.memoryUsagePercent) + "% used")
+                                            : controlCenter.systemBatteryStatus))
 
-                                width: (performanceRow.width - performanceRow.spacing * 2) / 3
+                                width: (performanceRow.width - performanceRow.spacing * 3) / 4
                                 height: performanceRow.height
 
                                 onProgressValueChanged: {
@@ -1821,8 +1853,8 @@ Item {
 
                                 Behavior on animatedProgress {
                                     NumberAnimation {
-                                        duration: 460
-                                        easing.type: Easing.InOutCubic
+                                        duration: 380
+                                        easing.type: Easing.OutCubic
                                     }
                                 }
 
@@ -1835,107 +1867,122 @@ Item {
                                     opacity: 0.8
                                 }
 
-                                Item {
-                                    id: ringWrap
+                                Column {
+                                    width: parent.width - 8
+                                    anchors.centerIn: parent
+                                    spacing: 3
 
-                                    width: ringSize
-                                    height: ringSize
-                                    anchors.horizontalCenter: parent.horizontalCenter
-                                    anchors.top: parent.top
-                                    anchors.topMargin: 3
+                                    Item {
+                                        width: parent.width
+                                        height: metricCard.ringSize
 
-                                    Canvas {
-                                        id: ringCanvas
+                                        Item {
+                                            id: ringWrap
 
-                                        anchors.fill: parent
-                                        antialiasing: true
+                                            width: metricCard.ringSize
+                                            height: metricCard.ringSize
+                                            anchors.centerIn: parent
 
-                                        property real currentProgress: Math.max(0, Math.min(1, parent.parent.animatedProgress))
-                                        property color activeColor: parent.parent.ringColor
+                                            Rectangle {
+                                                anchors.fill: parent
+                                                radius: width / 2
+                                                color: "transparent"
+                                                border.width: 1
+                                                border.color: "#2a3543"
+                                            }
 
-                                        onCurrentProgressChanged: requestPaint()
-                                        onActiveColorChanged: requestPaint()
-                                        onWidthChanged: requestPaint()
-                                        onHeightChanged: requestPaint()
+                                            Canvas {
+                                                id: ringCanvas
 
-                                        onPaint: {
-                                            const ctx = getContext("2d");
-                                            const centerX = width / 2;
-                                            const centerY = height / 2;
-                                            const radius = Math.min(width, height) / 2 - 2.8;
-                                            const lineWidth = 3.2;
-                                            const segments = 48;
-                                            const step = (Math.PI * 2) / segments;
-                                            const segmentSpan = step * 0.56;
+                                                anchors.fill: parent
+                                                antialiasing: true
 
-                                            ctx.clearRect(0, 0, width, height);
-                                            ctx.lineWidth = lineWidth;
-                                            ctx.lineCap = "round";
+                                                property real currentProgress: Math.max(0, Math.min(1, Number(metricCard.animatedProgress) || 0))
+                                                property color activeColor: metricCard.ringColor
 
-                                            for (let segmentIndex = 0; segmentIndex < segments; segmentIndex++) {
-                                                const startAngle = -Math.PI / 2 + segmentIndex * step;
-                                                const endAngle = startAngle + segmentSpan;
-                                                const active = (segmentIndex + 1) / segments <= currentProgress;
-                                                const inactiveColor = Qt.rgba(0.17, 0.2, 0.25, 0.58);
-                                                const activeAlpha = 0.55 + 0.45 * ((segmentIndex + 1) / segments);
+                                                onCurrentProgressChanged: requestPaint()
+                                                onActiveColorChanged: requestPaint()
+                                                onWidthChanged: requestPaint()
+                                                onHeightChanged: requestPaint()
 
-                                                ctx.strokeStyle = active
-                                                    ? Qt.rgba(activeColor.r, activeColor.g, activeColor.b, activeAlpha)
-                                                    : inactiveColor;
-                                                ctx.beginPath();
-                                                ctx.arc(centerX, centerY, radius, startAngle, endAngle, false);
-                                                ctx.stroke();
+                                                onPaint: {
+                                                    const ctx = getContext("2d");
+                                                    const centerX = width / 2;
+                                                    const centerY = height / 2;
+                                                    const radius = Math.min(width, height) / 2 - 3.2;
+                                                    const lineWidth = 4.1;
+                                                    const startAngle = -Math.PI / 2;
+                                                    const clampedProgress = Math.max(0, Math.min(1, currentProgress));
+                                                    const endAngle = startAngle + Math.PI * 2 * clampedProgress;
+
+                                                    ctx.clearRect(0, 0, width, height);
+                                                    ctx.lineWidth = lineWidth;
+                                                    ctx.lineCap = "round";
+
+                                                    ctx.strokeStyle = Qt.rgba(activeColor.r, activeColor.g, activeColor.b, 0.28);
+                                                    ctx.beginPath();
+                                                    ctx.arc(centerX, centerY, radius, startAngle, Math.PI * 1.5, false);
+                                                    ctx.stroke();
+
+                                                    if (clampedProgress > 0.001) {
+                                                        ctx.strokeStyle = Qt.rgba(activeColor.r, activeColor.g, activeColor.b, 0.98);
+                                                        ctx.beginPath();
+                                                        ctx.arc(centerX, centerY, radius, startAngle, endAngle, false);
+                                                        ctx.stroke();
+                                                    }
+                                                }
+                                            }
+
+                                            Rectangle {
+                                                anchors.centerIn: parent
+                                                width: parent.width - 14
+                                                height: width
+                                                radius: width / 2
+                                                color: "#05070a"
+                                                border.width: 1
+                                                border.color: "#1f2834"
+                                            }
+
+                                            Text {
+                                                anchors.centerIn: parent
+                                                anchors.verticalCenterOffset: -1
+                                                text: metricCard.centerPercentText
+                                                color: metricCard.valueColor
+                                                font.pixelSize: metricCard.tempCard ? 11 : (metricCard.batteryCard ? 10 : 12)
+                                                font.family: heroFontFamily
+                                                font.weight: Font.Bold
+                                                font.letterSpacing: -0.2
                                             }
                                         }
                                     }
 
-                                    Rectangle {
-                                        anchors.centerIn: parent
-                                        width: parent.width - 14
-                                        height: width
-                                        radius: width / 2
-                                        color: "#05070a"
-                                        border.width: 1
-                                        border.color: "#141922"
+                                    Text {
+                                        height: 12
+                                        width: parent.width
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                        text: titleText
+                                        color: "#c9d4e3"
+                                        font.pixelSize: 8
+                                        font.family: textFontFamily
+                                        font.weight: Font.DemiBold
+                                        elide: Text.ElideRight
                                     }
 
                                     Text {
-                                        anchors.centerIn: parent
-                                        text: metricCard.centerPercentText
-                                        color: metricCard.ringColor
-                                        font.pixelSize: metricCard.tempCard ? 10 : 10
-                                        font.family: heroFontFamily
-                                        font.weight: Font.Bold
-                                        font.letterSpacing: -0.15
+                                        height: 12
+                                        width: parent.width
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                        text: footerText
+                                        color: batteryCard
+                                            ? (controlCenter.systemBatteryLow ? "#ff9898" : (controlCenter.isCharging ? "#9fcfff" : "#9cd5b2"))
+                                            : "#b8c6d7"
+                                        font.pixelSize: 7
+                                        font.family: textFontFamily
+                                        font.weight: Font.Medium
+                                        elide: Text.ElideRight
                                     }
-                                }
-
-                                Text {
-                                    anchors.top: ringWrap.bottom
-                                    anchors.topMargin: 6
-                                    anchors.horizontalCenter: parent.horizontalCenter
-                                    width: parent.width
-                                    horizontalAlignment: Text.AlignHCenter
-                                    text: titleText
-                                    color: "#b8bec9"
-                                    font.pixelSize: 9
-                                    font.family: textFontFamily
-                                    font.weight: Font.Medium
-                                    elide: Text.ElideRight
-                                }
-
-                                Text {
-                                    anchors.top: ringWrap.bottom
-                                    anchors.topMargin: 20
-                                    anchors.horizontalCenter: parent.horizontalCenter
-                                    width: parent.width - 4
-                                    horizontalAlignment: Text.AlignHCenter
-                                    text: footerText
-                                    color: cpuCard || tempCard ? "#f3f5f8" : "#d6dce7"
-                                    font.pixelSize: cpuCard || tempCard ? 10 : 8
-                                    font.family: textFontFamily
-                                    font.weight: cpuCard || tempCard ? Font.DemiBold : Font.Medium
-                                    elide: Text.ElideRight
                                 }
                             }
                         }
