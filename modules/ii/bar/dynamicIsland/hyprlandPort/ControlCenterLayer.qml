@@ -69,6 +69,18 @@ Item {
     property bool quickBluetoothTarget: false
     property bool quickNightLightPending: false
     property bool quickNightLightTarget: false
+    readonly property var quickFocusPresets: [
+        { key: "off", label: "Off", shortLabel: "Off", icon: "bell-off", silent: false },
+        { key: "dnd", label: "Do Not Disturb", shortLabel: "DND", icon: "moon", silent: true },
+        { key: "work", label: "Work", shortLabel: "Work", icon: "briefcase", silent: true },
+        { key: "meeting", label: "Meeting", shortLabel: "Meeting", icon: "calendar", silent: true },
+        { key: "gaming", label: "Gaming", shortLabel: "Gaming", icon: "gamepad-2", silent: true }
+    ]
+    readonly property var quickPowerProfilePresets: [
+        { key: "power-saver", label: "Power Saver", icon: "battery", description: "Lower power usage" },
+        { key: "balanced", label: "Balanced", icon: "layout-grid", description: "Balanced power and performance" },
+        { key: "performance", label: "Performance", icon: "cpu", description: "Higher speed, more power draw" }
+    ]
 
     property int pageIndex: 0
     property real dragOffset: 0
@@ -359,36 +371,45 @@ Item {
             quickDetailFlick.contentY = 0;
     }
 
+    function presetByKey(presets, key) {
+        const normalized = String(key || "").toLowerCase();
+        for (let i = 0; i < presets.length; i++) {
+            const item = presets[i];
+            if (String(item.key || "").toLowerCase() === normalized)
+                return item;
+        }
+        return null;
+    }
+
+    function quickFocusPreset(mode) {
+        return presetByKey(quickFocusPresets, mode) || quickFocusPresets[0];
+    }
+
+    function quickPowerProfilePreset(profile) {
+        return presetByKey(quickPowerProfilePresets, profile);
+    }
+
+    function quickPowerProfileKeys() {
+        const keys = [];
+        for (let i = 0; i < quickPowerProfilePresets.length; i++)
+            keys.push(String(quickPowerProfilePresets[i].key));
+        return keys;
+    }
+
     function quickSetFocusMode(mode) {
-        const next = String(mode || "off").toLowerCase();
-        quickFocusMode = next;
-        Notifications.silent = next !== "off";
+        const preset = quickFocusPreset(mode);
+        quickFocusMode = String(preset.key || "off");
+        Notifications.silent = !!preset.silent;
     }
 
     function quickFocusModeLabel(mode) {
-        const key = String(mode || "off").toLowerCase();
-        if (key === "dnd")
-            return "Do Not Disturb";
-        if (key === "work")
-            return "Work";
-        if (key === "meeting")
-            return "Meeting";
-        if (key === "gaming")
-            return "Gaming";
-        return "Off";
+        const preset = quickFocusPreset(mode);
+        return String(preset.label || "Off");
     }
 
     function quickFocusModeIcon(mode) {
-        const key = String(mode || "off").toLowerCase();
-        if (key === "dnd")
-            return "moon";
-        if (key === "work")
-            return "briefcase";
-        if (key === "meeting")
-            return "calendar";
-        if (key === "gaming")
-            return "gamepad-2";
-        return "bell-off";
+        const preset = quickFocusPreset(mode);
+        return String(preset.icon || "bell-off");
     }
 
     function quickToggleNetwork() {
@@ -437,44 +458,31 @@ Item {
     }
 
     function quickPowerProfilePretty(profile) {
-        const key = String(profile || "").trim().toLowerCase();
-        if (key === "performance")
-            return "Performance";
-        if (key === "power-saver")
-            return "Power Saver";
-        if (key === "balanced")
-            return "Balanced";
-        return "Unknown";
+        const preset = quickPowerProfilePreset(profile);
+        return preset ? String(preset.label || "Unknown") : "Unknown";
     }
 
     function quickPowerProfileIcon(profile) {
-        const key = String(profile || "").trim().toLowerCase();
-        if (key === "power-saver")
-            return "battery";
-        if (key === "performance")
-            return "cpu";
-        return "layout-grid";
+        const preset = quickPowerProfilePreset(profile);
+        return preset ? String(preset.icon || "power") : "power";
     }
 
     function quickPowerProfileDescription(profile) {
-        const key = String(profile || "").trim().toLowerCase();
-        if (key === "power-saver")
-            return "Lower power usage";
-        if (key === "performance")
-            return "Higher speed, more power draw";
-        if (key === "balanced")
-            return "Balanced power and performance";
-        return "Profile unavailable";
+        const preset = quickPowerProfilePreset(profile);
+        return preset ? String(preset.description || "Profile unavailable") : "Profile unavailable";
     }
 
     function quickCyclePowerProfile() {
         if (!quickHasPowerProfileCapability)
             return;
 
-        const order = ["power-saver", "balanced", "performance"];
-        const current = String(quickPowerProfile || "balanced").toLowerCase();
-        const currentIndex = order.indexOf(current);
-        const next = order[(currentIndex + 1 + order.length) % order.length];
+        const keys = quickPowerProfileKeys();
+        if (keys.length === 0)
+            return;
+
+        const current = String(quickPowerProfile || "").toLowerCase();
+        const currentIndex = keys.indexOf(current);
+        const next = keys[(currentIndex + 1 + keys.length) % keys.length];
         quickSetPowerProfile(next);
     }
 
@@ -483,7 +491,7 @@ Item {
             return;
 
         const next = String(profile || "").trim().toLowerCase();
-        if (!["power-saver", "balanced", "performance"].includes(next))
+        if (!quickPowerProfileKeys().includes(next))
             return;
 
         quickPowerProfile = next;
@@ -584,7 +592,14 @@ Item {
         target: Notifications
 
         function onSilentChanged() {
-            quickFocusMode = Notifications.silent ? "dnd" : "off";
+            if (!Notifications.silent) {
+                quickFocusMode = "off";
+                return;
+            }
+
+            const preset = controlCenter.quickFocusPreset(controlCenter.quickFocusMode);
+            if (!preset.silent)
+                quickFocusMode = "dnd";
         }
     }
 
@@ -655,7 +670,7 @@ Item {
         stdout: StdioCollector {
             onStreamFinished: {
                 const value = String(text || "").trim().toLowerCase();
-                const validProfiles = ["power-saver", "balanced", "performance"];
+                const validProfiles = controlCenter.quickPowerProfileKeys();
                 controlCenter.quickPowerProfile = validProfiles.includes(value) ? value : "unknown";
             }
         }
@@ -3345,13 +3360,7 @@ Item {
                                 columnSpacing: 7
 
                                 Repeater {
-                                    model: [
-                                        { key: "off", label: "Off", icon: "bell-off" },
-                                        { key: "dnd", label: "DND", icon: "moon" },
-                                        { key: "work", label: "Work", icon: "briefcase" },
-                                        { key: "meeting", label: "Meeting", icon: "calendar" },
-                                        { key: "gaming", label: "Gaming", icon: "gamepad-2" }
-                                    ]
+                                    model: controlCenter.quickFocusPresets
 
                                     delegate: Rectangle {
                                         required property var modelData
@@ -3393,7 +3402,7 @@ Item {
 
                                             Text {
                                                 anchors.verticalCenter: parent.verticalCenter
-                                                text: String(modelData.label)
+                                                text: String(modelData.shortLabel || modelData.label || "")
                                                 color: "#e7eef9"
                                                 font.pixelSize: 9
                                                 font.family: textFontFamily
@@ -3473,12 +3482,12 @@ Item {
                                 spacing: 7
 
                                 Repeater {
-                                    model: ["power-saver", "balanced", "performance"]
+                                    model: controlCenter.quickPowerProfilePresets
 
                                     delegate: Rectangle {
                                         required property var modelData
 
-                                        readonly property string profileKey: String(modelData)
+                                        readonly property string profileKey: String(modelData.key)
                                         readonly property bool active: controlCenter.quickPowerProfile === profileKey
                                         width: (quickDetailLoader.width - 14) / 3
                                         height: 44
@@ -3516,7 +3525,7 @@ Item {
 
                                             Text {
                                                 anchors.horizontalCenter: parent.horizontalCenter
-                                                text: controlCenter.quickPowerProfilePretty(profileKey)
+                                                text: String(modelData.label || controlCenter.quickPowerProfilePretty(profileKey))
                                                 color: "#e8f1fb"
                                                 font.pixelSize: 7
                                                 font.family: textFontFamily

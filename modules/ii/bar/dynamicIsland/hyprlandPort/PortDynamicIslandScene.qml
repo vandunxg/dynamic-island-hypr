@@ -571,6 +571,7 @@ Item {
         property bool expandedByPlayerAutoOpen: false
         property bool pomodoroCompactForced: false
         property real lyricsCapsuleWidth: 220
+        readonly property var compactPreviewFeatureOrder: ["default", "media", "pomodoro"]
         property string compactPreviewTarget: "default"
         property real compactPreviewProgress: 0
         property real expandedPreviewProgress: 0
@@ -595,8 +596,8 @@ Item {
         readonly property bool compactAnyPreviewAvailable: mediaCompactAvailable || pomodoroCompactAvailable
         readonly property bool compactCanSwipe: islandState === "normal" && compactAnyPreviewAvailable
         readonly property bool compactPreviewVisible: islandState === "normal"
-            && ((compactPreviewTarget === "media" && mediaCompactAvailable)
-                || (compactPreviewTarget === "pomodoro" && pomodoroCompactAvailable))
+            && compactPreviewTarget !== "default"
+            && compactPreviewIsAvailable(compactPreviewTarget)
         readonly property bool mediaCompactVisible: compactPreviewVisible
             && compactPreviewTarget === "media"
             && mediaCompactAvailable
@@ -769,12 +770,31 @@ Item {
                 syncCompactPreviewState();
         }
 
+        function compactPreviewIsAvailable(featureKey) {
+            const key = String(featureKey || "default").toLowerCase();
+            if (key === "default")
+                return true;
+            if (key === "media")
+                return mediaCompactAvailable;
+            if (key === "pomodoro")
+                return pomodoroCompactAvailable;
+            return false;
+        }
+
+        function compactPreviewProgressFor(featureKey) {
+            return String(featureKey || "default").toLowerCase() === "pomodoro" ? 1 : 0;
+        }
+
         function compactPreviewOptions() {
-            const options = ["default"];
-            if (mediaCompactAvailable)
-                options.push("media");
-            if (pomodoroCompactAvailable)
-                options.push("pomodoro");
+            const options = [];
+            for (let i = 0; i < compactPreviewFeatureOrder.length; i++) {
+                const featureKey = compactPreviewFeatureOrder[i];
+                if (compactPreviewIsAvailable(featureKey))
+                    options.push(featureKey);
+            }
+
+            if (options.length === 0)
+                options.push("default");
             return options;
         }
 
@@ -785,10 +805,7 @@ Item {
         }
 
         function syncCompactPreviewProgress() {
-            if (compactPreviewTarget === "pomodoro")
-                compactPreviewProgress = 1;
-            else
-                compactPreviewProgress = 0;
+            compactPreviewProgress = compactPreviewProgressFor(compactPreviewTarget);
         }
 
         function syncCompactPreviewState() {
@@ -817,37 +834,32 @@ Item {
             const direction = step >= 0 ? 1 : -1;
             const currentIndex = compactPreviewIndex();
             const nextIndex = Math.max(0, Math.min(options.length - 1, currentIndex + direction));
-            compactPreviewTarget = options[nextIndex];
-            syncCompactPreviewProgress();
+            showCompactPreview(options[nextIndex]);
         }
 
         function showMediaCompactPreview() {
-            if (!mediaCompactAvailable) {
-                compactPreviewTarget = "default";
-                compactPreviewProgress = 0;
-                return;
-            }
-
-            compactPreviewTarget = "media";
-            syncCompactPreviewProgress();
+            showCompactPreview("media");
         }
 
         function showPomodoroCompactPreview() {
             pomodoroCompactForced = true;
+            showCompactPreview("pomodoro");
+        }
 
-            if (!pomodoroCompactAvailable) {
+        function showDefaultCompactPreview() {
+            showCompactPreview("default");
+        }
+
+        function showCompactPreview(targetKey) {
+            const normalizedTarget = String(targetKey || "default").toLowerCase();
+            if (!compactPreviewIsAvailable(normalizedTarget)) {
                 compactPreviewTarget = "default";
                 compactPreviewProgress = 0;
                 return;
             }
 
-            compactPreviewTarget = "pomodoro";
+            compactPreviewTarget = normalizedTarget;
             syncCompactPreviewProgress();
-        }
-
-        function showDefaultCompactPreview() {
-            compactPreviewTarget = "default";
-            compactPreviewProgress = 0;
         }
 
         function openPomodoroSetup() {

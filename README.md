@@ -220,3 +220,46 @@ Recommended include list:
 - `docs/dynamic-feature-naming.md`
 
 Do not include runtime logs/cache from `/run/user/...`.
+
+---
+
+## Contributor Notes (Scalable, Open-Source-Friendly)
+
+To keep this project maintainable as features grow, the Dynamic Island code now follows a few extension rules:
+
+- Prefer data-driven registries over scattered hard-coded branches.
+- Keep feature-specific UI state isolated (avoid cross-feature side effects).
+- Add new behavior through utility helpers first, then wire into UI layers.
+- Make fallback behavior explicit (`unknown`, `unavailable`, `default`) instead of implicit.
+
+### Key extension points
+
+- Compact preview routing (default/media/pomodoro):
+  - `modules/ii/bar/dynamicIsland/hyprlandPort/PortDynamicIslandScene.qml`
+  - helpers: `compactPreviewFeatureOrder`, `compactPreviewOptions()`, `showCompactPreview()`
+
+- Quick Controls focus/power presets:
+  - `modules/ii/bar/dynamicIsland/hyprlandPort/ControlCenterLayer.qml`
+  - registries: `quickFocusPresets`, `quickPowerProfilePresets`
+  - helpers: `presetByKey()`, `quickFocusPreset()`, `quickPowerProfilePreset()`
+
+- Notification rendering pipeline:
+  - `modules/ii/bar/dynamicIsland/hyprlandPort/NotificationLayer.qml`
+  - split fields: app/title/secondary line, icon fallback chain, compact-ultra mode
+
+### How to add a new compact feature safely
+
+1. Add availability and rendering layer.
+2. Register it in compact preview order/helpers.
+3. Keep `default` as resting target.
+4. Ensure swipe and click actions still resolve to existing behavior.
+5. Validate with `qmllint` and runtime checks (no gesture/event bleed).
+
+### How to add a new focus/power mode safely
+
+1. Add preset object to the relevant registry.
+2. Reuse existing helpers for label/icon/description lookup.
+3. Avoid duplicating mode strings in multiple UI sections.
+4. Keep capability guards and fallback state intact.
+
+This structure is intentionally designed so adding one feature does not require editing many unrelated files.
