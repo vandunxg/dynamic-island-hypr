@@ -570,6 +570,7 @@ Item {
         property bool expandedByPlayerAutoOpen: false
         property bool pomodoroCompactForced: false
         property real lyricsCapsuleWidth: 220
+        property string compactPreviewTarget: "default"
         property real compactPreviewProgress: 0
         property real expandedPreviewProgress: 0
         readonly property int defaultAutoHideInterval: 1250
@@ -590,12 +591,17 @@ Item {
             || pomodoroCompactForced
         readonly property bool mediaCompactAvailable: islandState === "normal" && adapter.mediaAvailable
         readonly property bool pomodoroCompactAvailable: islandState === "normal" && pomodoroCompactEnabled
-        readonly property bool compactCanSwipe: mediaCompactAvailable && pomodoroCompactAvailable
-        readonly property bool mediaCompactVisible: mediaCompactAvailable
-            && (!pomodoroCompactAvailable || compactPreviewProgress < 0.5)
-        readonly property bool pomodoroCompactVisible: pomodoroCompactAvailable
-            && (!mediaCompactAvailable || compactPreviewProgress >= 0.5)
-        readonly property bool compactPreviewVisible: mediaCompactAvailable || pomodoroCompactAvailable
+        readonly property bool compactAnyPreviewAvailable: mediaCompactAvailable || pomodoroCompactAvailable
+        readonly property bool compactCanSwipe: islandState === "normal" && compactAnyPreviewAvailable
+        readonly property bool compactPreviewVisible: islandState === "normal"
+            && ((compactPreviewTarget === "media" && mediaCompactAvailable)
+                || (compactPreviewTarget === "pomodoro" && pomodoroCompactAvailable))
+        readonly property bool mediaCompactVisible: compactPreviewVisible
+            && compactPreviewTarget === "media"
+            && mediaCompactAvailable
+        readonly property bool pomodoroCompactVisible: compactPreviewVisible
+            && compactPreviewTarget === "pomodoro"
+            && pomodoroCompactAvailable
         readonly property bool expandedCanSwipe: islandState === "expanded" && adapter.mediaAvailable && pomodoroCompactEnabled
         readonly property bool expandedMediaVisible: islandState === "expanded" && (!expandedCanSwipe || expandedPreviewProgress < 0.5)
         readonly property bool expandedPomodoroVisible: islandState === "expanded" && expandedCanSwipe && expandedPreviewProgress >= 0.5
@@ -609,12 +615,7 @@ Item {
             : null
 
         onMediaCompactAvailableChanged: syncCompactPreviewState()
-        onPomodoroCompactAvailableChanged: {
-            if (pomodoroCompactAvailable && mediaCompactAvailable)
-                showMediaCompactPreview();
-            else
-                syncCompactPreviewState();
-        }
+        onPomodoroCompactAvailableChanged: syncCompactPreviewState()
         onExpandedCanSwipeChanged: syncExpandedPreviewState()
 
         property real trackProgress: 0
@@ -766,32 +767,85 @@ Item {
                 syncCompactPreviewState();
         }
 
-        function syncCompactPreviewState() {
-            if (mediaCompactAvailable && !pomodoroCompactAvailable) {
-                compactPreviewProgress = 0;
-                return;
-            }
+        function compactPreviewOptions() {
+            const options = ["default"];
+            if (mediaCompactAvailable)
+                options.push("media");
+            if (pomodoroCompactAvailable)
+                options.push("pomodoro");
+            return options;
+        }
 
-            if (!mediaCompactAvailable && pomodoroCompactAvailable) {
+        function compactPreviewIndex() {
+            const options = compactPreviewOptions();
+            const index = options.indexOf(compactPreviewTarget);
+            return index >= 0 ? index : 0;
+        }
+
+        function syncCompactPreviewProgress() {
+            if (compactPreviewTarget === "pomodoro")
                 compactPreviewProgress = 1;
-                return;
-            }
+            else
+                compactPreviewProgress = 0;
+        }
 
-            if (!mediaCompactAvailable && !pomodoroCompactAvailable) {
+        function syncCompactPreviewState() {
+            const options = compactPreviewOptions();
+
+            if (options.length <= 1) {
+                compactPreviewTarget = "default";
                 compactPreviewProgress = 0;
                 return;
             }
 
-            compactPreviewProgress = compactPreviewProgress >= 0.5 ? 1 : 0;
+            if (options.indexOf(compactPreviewTarget) === -1)
+                compactPreviewTarget = "default";
+
+            syncCompactPreviewProgress();
+        }
+
+        function stepCompactPreview(step) {
+            const options = compactPreviewOptions();
+            if (options.length <= 1) {
+                compactPreviewTarget = "default";
+                compactPreviewProgress = 0;
+                return;
+            }
+
+            const direction = step >= 0 ? 1 : -1;
+            const currentIndex = compactPreviewIndex();
+            const nextIndex = Math.max(0, Math.min(options.length - 1, currentIndex + direction));
+            compactPreviewTarget = options[nextIndex];
+            syncCompactPreviewProgress();
         }
 
         function showMediaCompactPreview() {
-            compactPreviewProgress = 0;
+            if (!mediaCompactAvailable) {
+                compactPreviewTarget = "default";
+                compactPreviewProgress = 0;
+                return;
+            }
+
+            compactPreviewTarget = "media";
+            syncCompactPreviewProgress();
         }
 
         function showPomodoroCompactPreview() {
             pomodoroCompactForced = true;
-            compactPreviewProgress = 1;
+
+            if (!pomodoroCompactAvailable) {
+                compactPreviewTarget = "default";
+                compactPreviewProgress = 0;
+                return;
+            }
+
+            compactPreviewTarget = "pomodoro";
+            syncCompactPreviewProgress();
+        }
+
+        function showDefaultCompactPreview() {
+            compactPreviewTarget = "default";
+            compactPreviewProgress = 0;
         }
 
         function openPomodoroSetup() {
@@ -1168,8 +1222,7 @@ Item {
                 if (!adapter.mediaAvailable && (islandContainer.islandState === "lyrics" || islandContainer.restingState === "lyrics"))
                     islandContainer.showTimeCapsule();
 
-                if (adapter.mediaAvailable && islandContainer.islandState === "normal" && islandContainer.pomodoroCompactAvailable)
-                    islandContainer.showMediaCompactPreview();
+                islandContainer.syncCompactPreviewState();
 
                 if (adapter.mediaAvailable && islandContainer.islandState === "expanded" && islandContainer.expandedCanSwipe)
                     islandContainer.showExpandedMediaPreview();
@@ -1416,6 +1469,7 @@ Item {
             property real swipeStartX: 0
             property real swipeStartY: 0
             property real swipeStartProgress: 0
+            property real swipeLastDeltaX: 0
             property string swipeMode: ""
             property bool swipeArmed: false
             property bool swipePassedThreshold: false
@@ -1443,7 +1497,7 @@ Item {
                 if (compactExpandedSwipePressed && islandContainer.compactCanSwipe) {
                     swipeArmed = true;
                     swipeMode = "compact_horizontal";
-                    swipeStartProgress = islandContainer.compactPreviewProgress;
+                    swipeStartProgress = islandContainer.compactPreviewIndex();
                 } else if (compactExpandedSwipePressed && islandContainer.expandedCanSwipe) {
                     swipeArmed = true;
                     swipeMode = "expanded_horizontal";
@@ -1460,6 +1514,7 @@ Item {
 
                 swipePassedThreshold = false;
                 swipeMoved = false;
+                swipeLastDeltaX = 0;
             }
 
             onPositionChanged: mouse => {
@@ -1471,11 +1526,13 @@ Item {
                 const absDeltaX = Math.abs(deltaX);
                 const absDeltaY = Math.abs(deltaY);
 
+                swipeLastDeltaX = deltaX;
                 let nextProgress = swipeStartProgress;
 
                 if (swipeMode === "compact_horizontal") {
-                    const adjustedDeltaX = absDeltaY < 24 ? deltaX : 0;
-                    nextProgress = Math.max(0, Math.min(1, swipeStartProgress + adjustedDeltaX / 108));
+                    swipeMoved = swipeMoved || absDeltaX > 6 || absDeltaY > 6;
+                    swipePassedThreshold = absDeltaY < 26 && absDeltaX >= 30;
+                    return;
                 } else {
                     const adjustedDeltaX = absDeltaY < 24 ? deltaX : 0;
                     nextProgress = Math.max(0, Math.min(1, swipeStartProgress + adjustedDeltaX / 108));
@@ -1504,10 +1561,7 @@ Item {
 
                 if (swipeArmed && swipePassedThreshold) {
                     if (swipeMode === "compact_horizontal") {
-                        if (swipeStartProgress < 0.5)
-                            islandContainer.showPomodoroCompactPreview();
-                        else
-                            islandContainer.showMediaCompactPreview();
+                        islandContainer.stepCompactPreview(swipeLastDeltaX >= 0 ? 1 : -1);
                     } else if (swipeMode === "expanded_horizontal") {
                         if (swipeStartProgress < 0.5)
                             islandContainer.showExpandedPomodoroPreview();
@@ -1521,7 +1575,7 @@ Item {
                     }
                 } else {
                     if (swipeMode === "compact_horizontal")
-                        islandContainer.compactPreviewProgress = swipeStartProgress;
+                        islandContainer.syncCompactPreviewState();
                     else if (swipeMode === "expanded_horizontal")
                         islandContainer.expandedPreviewProgress = swipeStartProgress;
                     else
